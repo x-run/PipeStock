@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -188,3 +188,51 @@ class StockListItem(BaseModel):
 class StockListEnvelope(BaseModel):
     data: list[StockListItem]
     pagination: PaginationMeta
+
+
+# ---------- Sales ----------
+
+class SalesCreate(BaseModel):
+    type: Literal["SALE", "REFUND"]
+    amount_yen: int = Field(..., ge=1)
+    product_id: Optional[uuid.UUID] = None
+    note: Optional[str] = Field(None, max_length=500)
+    request_id: Optional[uuid.UUID] = None
+    occurred_at: Optional[datetime] = None
+
+
+class SalesResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    type: str
+    amount_yen: int
+    product_id: Optional[uuid.UUID]
+    note: Optional[str]
+    occurred_at: datetime
+    created_at: datetime
+
+
+class SingleSalesEnvelope(BaseModel):
+    data: SalesResponse
+
+
+# ---------- Pie Chart ----------
+
+class PieRange(BaseModel):
+    start: date
+    end: date
+    preset: Optional[str]
+
+
+class PieBreakdownItem(BaseModel):
+    key: str
+    label: str
+    amount_yen: int
+
+
+class SalesPieEnvelope(BaseModel):
+    range: PieRange
+    total_yen: int
+    refund_total_yen: int
+    breakdown: list[PieBreakdownItem]

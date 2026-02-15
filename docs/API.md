@@ -564,3 +564,124 @@ Reserved ロックを解除すると同時に物理在庫を減らす。
 |-----------|------|
 | needs_reorder | `available <= reorder_point` の場合 true |
 | その他 | Dashboard Top と同じ指標定義 |
+
+---
+
+## 6. Sales エンドポイント
+
+### POST /api/v1/sales
+
+売上イベントを記録する。在庫とは連動しない。
+
+**安全設計**: クライアントは正数 `amount_yen` のみを送信し、`type=REFUND` の場合はサーバーが負の値に変換して保存する。
+
+**リクエストボディ:**
+
+```json
+{
+  "type": "SALE",
+  "amount_yen": 5000,
+  "product_id": "550e8400-e29b-41d4-a716-446655440000",
+  "note": "店頭販売",
+  "request_id": "770e8400-e29b-41d4-a716-446655440001",
+  "occurred_at": "2026-02-15T10:00:00"
+}
+```
+
+| フィールド | 型 | 必須 | バリデーション |
+|-----------|-----|------|---------------|
+| type | enum | Yes | SALE, REFUND |
+| amount_yen | integer | Yes | >= 1 (正数のみ) |
+| product_id | UUID | No | 存在する商品 (null の場合は円グラフで UNKNOWN に集約) |
+| note | string | No | 最大500文字 |
+| request_id | UUID | No | 重複不可 (409 DUPLICATE_REQUEST_ID) |
+| occurred_at | datetime | No | 省略時はサーバー時刻 |
+
+**DB 保存ルール:**
+
+| type | DB amount_yen |
+|------|---------------|
+| SALE | +amount_yen (正数) |
+| REFUND | -amount_yen (負数) |
+
+**レスポンス: 201 Created**
+
+```json
+{
+  "data": {
+    "id": "880e8400-e29b-41d4-a716-446655440001",
+    "type": "SALE",
+    "amount_yen": 5000,
+    "product_id": "550e8400-e29b-41d4-a716-446655440000",
+    "note": "店頭販売",
+    "occurred_at": "2026-02-15T10:00:00",
+    "created_at": "2026-02-15T10:00:01"
+  }
+}
+```
+
+---
+
+### GET /api/v1/dashboard/sales/pie
+
+売上円グラフ用。期間内の売上を商品別に集計し、TopN + OTHER で返す。
+
+**クエリパラメータ:**
+
+| パラメータ | 型 | 必須 | デフォルト | 説明 |
+|-----------|-----|------|----------|------|
+| preset | string | No | month | `month` / `3months` / `year` (start/end 未指定時) |
+| start | date | No | — | カスタム期間の開始日 (start + end の両方指定で有効) |
+| end | date | No | — | カスタム期間の終了日 |
+| group_by | string | No | product | `product` / `category` (category は将来用) |
+| limit | integer | No | 10 | TopN の件数 (1〜20) |
+
+**期間解決ルール:**
+- start + end が両方指定 → カスタム期間
+- それ以外 → preset を使用 (デフォルト: month)
+
+**preset の定義:**
+- `month`: 当月1日〜今日
+- `3months`: 3ヶ月前の1日〜今日
+- `year`: 1月1日〜今日
+
+**レスポンス: 200 OK**
+
+```json
+{
+  "range": {
+    "start": "2026-02-01",
+    "end": "2026-02-15",
+    "preset": "month"
+  },
+  "total_yen": 180000,
+  "refund_total_yen": -5000,
+  "breakdown": [
+    {
+      "key": "550e8400-...",
+      "label": "PIPE-001 ステンレスパイプ 25A",
+      "amount_yen": 100000
+    },
+    {
+      "key": "660e8400-...",
+      "label": "PIPE-002 銅パイプ",
+      "amount_yen": 50000
+    },
+    {
+      "key": "OTHER",
+      "label": "その他",
+      "amount_yen": 30000
+    }
+  ]
+}
+```
+
+**フィールド説明:**
+
+| フィールド | 説明 |
+|-----------|------|
+| total_yen | 期間内 SUM(amount_yen)。REFUND が含まれると減少する |
+| refund_total_yen | REFUND のみの SUM (常に 0 以下) |
+| breakdown[].key | product_id (文字列) / `"UNKNOWN"` (product_id=null) / `"OTHER"` (TopN 外) |
+| breakdown[].label | `"CODE NAME"` / `"不明な商品"` / `"その他"` |
+| breakdown[].amount_yen | そのグループの SUM(amount_yen) |

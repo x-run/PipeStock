@@ -131,6 +131,31 @@
 | S-10 | Tx 0 件の商品 | 全指標 0 で返る |
 | S-11 | 非アクティブ商品除外 | include_inactive=false でアクティブのみ |
 
+### 4.3 売上イベント API (Phase 4.5)
+
+| # | テスト内容 | 期待結果 |
+|---|-----------|---------|
+| SL-1 | type=SALE で売上記録 | amount_yen が正数で保存される |
+| SL-2 | type=REFUND で返金記録 | amount_yen が負数で保存される (サーバー符号変換) |
+| SL-3 | product_id なしで売上記録 | null 許容, 円グラフでは UNKNOWN に集約 |
+| SL-4 | 存在しない product_id で売上記録 | 404 PRODUCT_NOT_FOUND |
+| SL-5 | request_id 重複 | 409 DUPLICATE_REQUEST_ID |
+| SL-6 | amount_yen < 1 | 400 VALIDATION_ERROR |
+| SL-7 | occurred_at 省略 | サーバー時刻が自動設定される |
+
+### 4.4 売上円グラフ API (Phase 4.5)
+
+| # | テスト内容 | 期待結果 |
+|---|-----------|---------|
+| SP-1 | 期間内の売上合計と商品別内訳 | total_yen = SUM, breakdown が商品別降順 |
+| SP-2 | REFUND を含む集計 | total_yen に REFUND 分が反映, refund_total_yen が負 |
+| SP-3 | limit で OTHER 生成 | limit 超過分が OTHER に集約 |
+| SP-4 | group_by デフォルト = product | パラメータ省略で商品別集計 |
+| SP-5 | product_id=null の売上 | UNKNOWN キーに集約, label="不明な商品" |
+| SP-6 | preset=month | 当月1日〜今日の範囲で集計 |
+| SP-7 | カスタム期間 (start/end) | 指定期間のみ集計, 範囲外は除外 |
+| SP-8 | 売上 0 件の期間 | total_yen=0, breakdown=[] |
+
 ---
 
 ## 5. UI (Phase 5)

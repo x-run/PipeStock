@@ -19,6 +19,7 @@
 | Available | **太字・メインカラー** | 最も重要な数値。主役として目立たせる |
 | On-hand | 通常テキスト | 参考値として表示 |
 | Reserved | **薄い色 (opacity: 0.5 程度)** | 補助情報として控えめに表示 |
+| Reserved のうち返品検品待ち | さらに薄い色 + ラベル「検品待ち」 | 返品由来の Reserved を区別 |
 | 発注点以下の商品 | 行の背景色を警告色 (薄いオレンジ/赤) | 注意喚起 |
 
 ### 2.2 数値フォーマット
@@ -177,6 +178,9 @@
 │ ○ 出庫 (type=OUT)                       │
 │ ○ 引当 (type=RESERVE)                   │
 │ ○ 引当解除・出荷 (type=OUT + UNRESERVE)  │
+│ ○ 返品到着 (type=IN + RESERVE batch)      │
+│ ○ 返品検品OK (type=UNRESERVE)            │
+│ ○ 返品検品NG・廃棄 (UNRESERVE + OUT batch)│
 │ ○ 棚卸補正・増 (type=ADJUST, INCREASE)   │
 │ ○ 棚卸補正・減 (type=ADJUST, DECREASE)   │
 ├─────────────────────────────────────────┤
@@ -190,6 +194,9 @@
 **要件:**
 - 操作をわかりやすいラベルで選択させる (API には type + qty のみ送信、符号はサーバーが決定)
 - 「引当解除・出荷」は batch API で OUT + UNRESERVE の2つの Tx を同時に作成
+- 「返品到着」は batch API で IN + RESERVE の2つの Tx を同時に作成 (reason: RETURN_ARRIVED / RETURN_PENDING)
+- 「返品検品OK」は単一 UNRESERVE (reason: RETURN_OK)
+- 「返品検品NG・廃棄」は batch API で UNRESERVE + OUT の2つの Tx を同時に作成 (reason: RETURN_REJECTED / SCRAP)
 - 棚卸補正は INCREASE / DECREASE を選択させ、direction として送信
 - 出庫系・引当系の操作時は Available チェックの結果をリアルタイムで警告表示
 - 登録成功後は商品詳細画面に戻る

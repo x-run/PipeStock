@@ -347,6 +347,80 @@ Tx を新規作成する。在庫が変動する。
 - 全 Tx に対して個別 Tx と同じバリデーション (type/direction の組み合わせチェック含む) を適用
 - 全 Tx の結果を合算した上で不変条件を検証する (中間状態では判定しない)
 
+#### 利用例: 引当解除・出荷
+
+→ 下記「レスポンス: 201 Created」を参照
+
+#### 利用例: 返品到着 (検品前)
+
+物理在庫を増やしつつ、検品完了まで Reserved でロックする。
+
+```json
+{
+  "transactions": [
+    {
+      "type": "IN",
+      "qty": 5,
+      "reason": "RETURN_ARRIVED"
+    },
+    {
+      "type": "RESERVE",
+      "qty": 5,
+      "reason": "RETURN_PENDING"
+    }
+  ]
+}
+```
+
+レスポンス例 (初期在庫: on_hand=100, reserved=0):
+
+```json
+{
+  "data": [
+    { "type": "IN", "bucket": "ON_HAND", "qty_delta": 5, "reason": "RETURN_ARRIVED", "..." : "..." },
+    { "type": "RESERVE", "bucket": "RESERVED", "qty_delta": 5, "reason": "RETURN_PENDING", "..." : "..." }
+  ],
+  "stock": { "available": 100, "on_hand": 105, "reserved": 5 }
+}
+```
+
+> available は変化しない (IN +5 と RESERVE +5 が相殺)。
+
+#### 利用例: 検品NG (廃棄)
+
+Reserved ロックを解除すると同時に物理在庫を減らす。
+
+```json
+{
+  "transactions": [
+    {
+      "type": "UNRESERVE",
+      "qty": 5,
+      "reason": "RETURN_REJECTED"
+    },
+    {
+      "type": "OUT",
+      "qty": 5,
+      "reason": "SCRAP"
+    }
+  ]
+}
+```
+
+レスポンス例 (在庫: on_hand=105, reserved=5, available=100):
+
+```json
+{
+  "data": [
+    { "type": "UNRESERVE", "bucket": "RESERVED", "qty_delta": -5, "reason": "RETURN_REJECTED", "..." : "..." },
+    { "type": "OUT", "bucket": "ON_HAND", "qty_delta": -5, "reason": "SCRAP", "..." : "..." }
+  ],
+  "stock": { "available": 100, "on_hand": 100, "reserved": 0 }
+}
+```
+
+> available は変化しない (UNRESERVE -5 と OUT -5 が相殺)。
+
 **レスポンス: 201 Created**
 
 ```json

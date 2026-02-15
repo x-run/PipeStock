@@ -88,6 +88,18 @@
 | IC-5 | ADJUST + direction なし | 400 エラー |
 | IC-6 | 不正な type 値 | 400 エラー |
 
+### 3.5 返品検品フローテスト (Return Flow)
+
+| # | テスト内容 | 期待結果 |
+|---|-----------|---------|
+| R-1 | 返品到着 batch (IN + RESERVE) | on_hand +qty, reserved +qty, available 変化なし |
+| R-2 | 検品OK (UNRESERVE) | reserved -qty, available +qty, on_hand 変化なし |
+| R-3 | 検品NG batch (UNRESERVE + OUT) | reserved -qty, on_hand -qty, available 変化なし |
+| R-4 | 返品到着 → 検品OK のフルフロー | 最終: on_hand +qty, reserved ±0, available +qty |
+| R-5 | 返品到着 → 検品NG のフルフロー | 最終: on_hand ±0, reserved ±0, available ±0 |
+| R-6 | 検品NG batch で Available 不足 (廃棄の OUT が超過) | 409 エラー, Tx なし |
+| R-7 | 返品到着 batch の原子性 (IN は OK だが RESERVE が Available 超過) | 409, Tx なし |
+
 ---
 
 ## 4. 在庫サマリ (Phase 4)
@@ -168,7 +180,21 @@
    → エラー: Available 不足 (引当要求=1, Available=0)
 ```
 
-### シナリオ 5: 非アクティブ商品
+### シナリオ 5: 返品検品フロー
+
+```
+1. 商品「PIPE-005」を登録
+2. 入庫: type=IN, qty=100
+   → On-hand=100, Reserved=0, Available=100
+3. 返品到着 (batch): IN qty=10 + RESERVE qty=10
+   → On-hand=110, Reserved=10, Available=100
+4. 検品OK: UNRESERVE qty=7
+   → On-hand=110, Reserved=3, Available=107
+5. 検品NG (batch): UNRESERVE qty=3 + OUT qty=3
+   → On-hand=107, Reserved=0, Available=107
+```
+
+### シナリオ 6: 非アクティブ商品
 
 ```
 1. 商品「PIPE-005」を登録

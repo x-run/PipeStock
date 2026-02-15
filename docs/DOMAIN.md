@@ -144,7 +144,76 @@ Available を減少させる操作は以下の3パターン:
   END IF
 ```
 
-## 7. ER 図 (テキスト)
+## 7. 返品検品フロー (QUARANTINE なし方式)
+
+既存の IN / OUT / RESERVE / UNRESERVE を組み合わせて、返品検品の3ステップを表現する。
+新しい type や bucket は追加しない。
+
+### 7.1 フロー概要
+
+```
+返品到着 ──→ 検品待ち ──→ 検品OK  → 在庫復帰
+                       └→ 検品NG  → 廃棄
+```
+
+### 7.2 Tx パターン
+
+**ステップ 1: 返品到着 (検品前)** — batch で原子的に2Tx
+
+| # | type | bucket | qty_delta | reason |
+|---|------|--------|-----------|--------|
+| 1 | IN | ON_HAND | +qty | RETURN_ARRIVED |
+| 2 | RESERVE | RESERVED | +qty | RETURN_PENDING |
+
+在庫変動: on_hand +qty / reserved +qty / **available 変化なし**
+
+> 物理在庫は増えるが、検品完了まで reserved でロックするため available は変わらない。
+
+**ステップ 2a: 検品OK (在庫復帰)** — 単一 Tx
+
+| # | type | bucket | qty_delta | reason |
+|---|------|--------|-----------|--------|
+| 1 | UNRESERVE | RESERVED | -qty | RETURN_OK |
+
+在庫変動: reserved -qty / **available +qty** / on_hand 変化なし
+
+> Reserved のロックを解除し、Available に反映する。
+
+**ステップ 2b: 検品NG (廃棄)** — batch で原子的に2Tx
+
+| # | type | bucket | qty_delta | reason |
+|---|------|--------|-----------|--------|
+| 1 | UNRESERVE | RESERVED | -qty | RETURN_REJECTED |
+| 2 | OUT | ON_HAND | -qty | SCRAP |
+
+在庫変動: reserved -qty / on_hand -qty / **available 変化なし**
+
+> Reserved ロックを解除すると同時に物理在庫を減らすため、Available は変化しない。
+
+### 7.3 reason の定義
+
+| reason | 使用コンテキスト | 説明 |
+|--------|-----------------|------|
+| RETURN_ARRIVED | 返品到着 (IN) | 返品商品が倉庫に到着 |
+| RETURN_PENDING | 返品到着 (RESERVE) | 検品待ちのため Available からロック |
+| RETURN_OK | 検品OK (UNRESERVE) | 検品合格、在庫復帰 |
+| RETURN_REJECTED | 検品NG (UNRESERVE) | 検品不合格、ロック解除 |
+| SCRAP | 検品NG (OUT) | 廃棄による物理在庫の減少 |
+
+> reason はフリーテキストフィールドであり、上記は運用上の規約である。
+> バリデーションは行わず、Tx 履歴のフィルタリングや集計に活用する。
+
+### 7.4 Available 計算との整合性
+
+返品フローの全ステップで `Available = On-hand - Reserved` の不変条件 (INV-4) は維持される:
+
+| ステップ | On-hand | Reserved | Available | 変化 |
+|---------|---------|----------|-----------|------|
+| 返品到着 | +N | +N | ±0 | IN + RESERVE が相殺 |
+| 検品OK | ±0 | -N | +N | UNRESERVE で解放 |
+| 検品NG | -N | -N | ±0 | OUT + UNRESERVE が相殺 |
+
+## 8. ER 図 (テキスト)
 
 ```
 +------------------+       +------------------+

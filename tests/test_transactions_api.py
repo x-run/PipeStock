@@ -1,0 +1,387 @@
+"""Transaction API tests — normal cases, invariants, batch, history, response shape.
+
+Test IDs (T-*) map to docs/TEST.md §3.
+"""
+
+import uuid
+
+from tests.helpers import create_item_id, post_batch, post_tx
+
+
+# ── T-1 ~ T-8: normal cases ─────────────────────────────────────
+
+class TestTxNormal:
+    def test_t1_in(self, client):
+        """IN → On-hand increases."""
+        pid = create_item_id(client)
+        res = post_tx(client, pid, type="IN", qty=50)
+        assert res.status_code == 201
+        stock = res.json()["stock"]
+        assert stock["on_hand"] == 50
+        assert stock["reserved"] == 0
+        assert stock["available"] == 50
+
+    def test_t2_out(self, client):
+        """OUT (Available sufficient) → On-hand decreases."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=100)
+        res = post_tx(client, pid, type="OUT", qty=30)
+        assert res.status_code == 201
+        stock = res.json()["stock"]
+        assert stock["on_hand"] == 70
+        assert stock["available"] == 70
+
+    def test_t3_reserve(self, client):
+        """RESERVE → Reserved increases, Available decreases."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=100)
+        res = post_tx(client, pid, type="RESERVE", qty=20)
+        assert res.status_code == 201
+        stock = res.json()["stock"]
+        assert stock["on_hand"] == 100
+        assert stock["reserved"] == 20
+        assert stock["available"] == 80
+
+    def test_t4_unreserve(self, client):
+        """UNRESERVE → Reserved decreases, Available increases."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=100)
+        post_tx(client, pid, type="RESERVE", qty=30)
+        res = post_tx(client, pid, type="UNRESERVE", qty=10)
+        assert res.status_code == 201
+        stock = res.json()["stock"]
+        assert stock["reserved"] == 20
+        assert stock["available"] == 80
+
+    def test_t5_adjust_increase(self, client):
+        """ADJUST/INCREASE → On-hand increases."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=50)
+        res = post_tx(client, pid, type="ADJUST", qty=5, direction="INCREASE")
+        assert res.status_code == 201
+        assert res.json()["stock"]["on_hand"] == 55
+
+    def test_t6_adjust_decrease(self, client):
+        """ADJUST/DECREASE → On-hand decreases."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=50)
+        res = post_tx(client, pid, type="ADJUST", qty=2, direction="DECREASE")
+        assert res.status_code == 201
+        assert res.json()["stock"]["on_hand"] == 48
+
+    def test_t7_multiple_txs_sum(self, client):
+        """Multiple Txs → SUM aggregation is correct."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=100)
+        post_tx(client, pid, type="IN", qty=50)
+        post_tx(client, pid, type="OUT", qty=30)
+        post_tx(client, pid, type="RESERVE", qty=20)
+        res = post_tx(client, pid, type="UNRESERVE", qty=5)
+        stock = res.json()["stock"]
+        assert stock["on_hand"] == 120   # 100+50-30
+        assert stock["reserved"] == 15   # 20-5
+        assert stock["available"] == 105  # 120-15
+
+    def test_t8_history_newest_first(self, client):
+        """Tx history → returned in newest-first order."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10, reason="1st")
+        post_tx(client, pid, type="IN", qty=20, reason="2nd")
+        post_tx(client, pid, type="IN", qty=30, reason="3rd")
+
+        res = client.get(f"/api/v1/products/{pid}/transactions")
+        assert res.status_code == 200
+        data = res.json()["data"]
+        assert len(data) == 3
+        assert data[0]["reason"] == "3rd"
+        assert data[2]["reason"] == "1st"
+
+
+# ── T-9 ~ T-20: invariant violations ────────────────────────────
+
+class TestTxInvariants:
+    def test_t9_out_insufficient_available(self, client):
+        """Available insufficient for OUT (on_hand OK, reserved constrains) → 409."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+        post_tx(client, pid, type="RESERVE", qty=8)
+        # on_hand=10, reserved=8, available=2 → OUT qty=5 makes available=-3
+        res = post_tx(client, pid, type="OUT", qty=5)
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "INSUFFICIENT_AVAILABLE"
+
+    def test_t10_out_exact_boundary(self, client):
+        """Available exactly sufficient → success (boundary)."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+        res = post_tx(client, pid, type="OUT", qty=10)
+        assert res.status_code == 201
+        assert res.json()["stock"]["available"] == 0
+
+    def test_t11_out_at_zero(self, client):
+        """Available=0, OUT qty=1 → 409."""
+        pid = create_item_id(client)
+        res = post_tx(client, pid, type="OUT", qty=1)
+        assert res.status_code == 409
+
+    def test_t12_adjust_without_direction(self, client):
+        """ADJUST without direction → 400."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+        res = post_tx(client, pid, type="ADJUST", qty=5)
+        assert res.status_code == 400
+
+    def test_t13_qty_zero(self, client):
+        """qty=0 → 400."""
+        pid = create_item_id(client)
+        res = post_tx(client, pid, type="IN", qty=0)
+        assert res.status_code == 400
+
+    def test_t14_inactive_item(self, client):
+        """Tx on inactive item → 400 PRODUCT_INACTIVE."""
+        pid = create_item_id(client)
+        client.delete(f"/api/v1/products/{pid}")
+        res = post_tx(client, pid, type="IN", qty=5)
+        assert res.status_code == 400
+        assert res.json()["error"]["code"] == "PRODUCT_INACTIVE"
+
+    def test_t15_on_hand_negative(self, client):
+        """Operation that would make On-hand negative → 409 INSUFFICIENT_ON_HAND."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=5)
+        res = post_tx(client, pid, type="ADJUST", qty=10, direction="DECREASE")
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "INSUFFICIENT_ON_HAND"
+
+    def test_t16_reserved_negative(self, client):
+        """Operation that would make Reserved negative → 409 INSUFFICIENT_RESERVED."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+        res = post_tx(client, pid, type="UNRESERVE", qty=1)
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "INSUFFICIENT_RESERVED"
+
+    def test_t17_tx_update_not_allowed(self, client):
+        """Tx update → no endpoint (405 or 404)."""
+        pid = create_item_id(client)
+        res = post_tx(client, pid, type="IN", qty=10)
+        tx_id = res.json()["data"]["id"]
+        res = client.put(
+            f"/api/v1/products/{pid}/transactions/{tx_id}",
+            json={"qty": 99},
+        )
+        assert res.status_code in (404, 405)
+
+    def test_t18_tx_delete_not_allowed(self, client):
+        """Tx delete → no endpoint (405 or 404)."""
+        pid = create_item_id(client)
+        res = post_tx(client, pid, type="IN", qty=10)
+        tx_id = res.json()["data"]["id"]
+        res = client.delete(f"/api/v1/products/{pid}/transactions/{tx_id}")
+        assert res.status_code in (404, 405)
+
+    def test_t19_reserve_exceeds_available(self, client):
+        """Available exceeded by reservation → 409."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+        res = post_tx(client, pid, type="RESERVE", qty=20)
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "INSUFFICIENT_AVAILABLE"
+
+    def test_t20_reserve_exact_boundary(self, client):
+        """Available exactly sufficient for reservation → success."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+        res = post_tx(client, pid, type="RESERVE", qty=10)
+        assert res.status_code == 201
+        assert res.json()["stock"]["available"] == 0
+
+    def test_adjust_decrease_available_check(self, client):
+        """ADJUST/DECREASE that would make Available negative → 409."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+        post_tx(client, pid, type="RESERVE", qty=8)
+        # available=2, adjust decrease 5 → on_hand=5, available=-3
+        res = post_tx(client, pid, type="ADJUST", qty=5, direction="DECREASE")
+        assert res.status_code == 409
+
+
+# ── Batch endpoint ───────────────────────────────────────────────
+
+class TestBatchTx:
+    def test_shipment_batch(self, client):
+        """引当解除・出荷: OUT + UNRESERVE atomically."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=100)
+        post_tx(client, pid, type="RESERVE", qty=30)
+
+        res = post_batch(client, pid, [
+            {"type": "OUT", "qty": 30},
+            {"type": "UNRESERVE", "qty": 30},
+        ])
+        assert res.status_code == 201
+        assert len(res.json()["data"]) == 2
+        stock = res.json()["stock"]
+        assert stock["on_hand"] == 70
+        assert stock["reserved"] == 0
+        assert stock["available"] == 70
+
+    def test_batch_all_or_nothing(self, client):
+        """If batch would violate invariant, nothing is committed."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+
+        res = post_batch(client, pid, [
+            {"type": "OUT", "qty": 5},
+            {"type": "OUT", "qty": 100},
+        ])
+        assert res.status_code == 409
+
+        history = client.get(f"/api/v1/products/{pid}/transactions")
+        assert history.json()["pagination"]["total"] == 1  # only the IN
+
+    def test_batch_validates_after_sum(self, client):
+        """Batch invariants are checked on the SUM, not intermediate."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=10)
+        post_tx(client, pid, type="RESERVE", qty=10)
+        res = post_batch(client, pid, [
+            {"type": "OUT", "qty": 5},
+            {"type": "UNRESERVE", "qty": 5},
+        ])
+        assert res.status_code == 201
+        assert res.json()["stock"]["available"] == 0
+
+    def test_batch_inactive_item(self, client):
+        pid = create_item_id(client)
+        client.delete(f"/api/v1/products/{pid}")
+        res = post_batch(client, pid, [
+            {"type": "IN", "qty": 10},
+        ])
+        assert res.status_code == 400
+        assert res.json()["error"]["code"] == "PRODUCT_INACTIVE"
+
+    def test_batch_request_id_dup_external(self, client):
+        """Batch with request_id already in DB → entire batch rolls back."""
+        pid = create_item_id(client)
+        dup_rid = str(uuid.uuid4())
+
+        res = post_tx(client, pid, type="IN", qty=50, request_id=dup_rid)
+        assert res.status_code == 201
+
+        res = post_batch(client, pid, [
+            {"type": "IN", "qty": 10, "request_id": str(uuid.uuid4())},
+            {"type": "IN", "qty": 20, "request_id": dup_rid},
+        ])
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "DUPLICATE_REQUEST_ID"
+
+        history = client.get(f"/api/v1/products/{pid}/transactions")
+        assert history.json()["pagination"]["total"] == 1
+
+    def test_batch_request_id_dup_within(self, client):
+        """Batch with duplicate request_ids within same batch → all-or-nothing."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=50)
+
+        same_rid = str(uuid.uuid4())
+        res = post_batch(client, pid, [
+            {"type": "OUT", "qty": 5, "request_id": same_rid},
+            {"type": "OUT", "qty": 3, "request_id": same_rid},
+        ])
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "DUPLICATE_REQUEST_ID"
+
+        history = client.get(f"/api/v1/products/{pid}/transactions")
+        assert history.json()["pagination"]["total"] == 1
+
+    def test_single_request_id_dup(self, client):
+        """Single tx with duplicate request_id → 409."""
+        pid = create_item_id(client)
+        rid = str(uuid.uuid4())
+
+        res = post_tx(client, pid, type="IN", qty=10, request_id=rid)
+        assert res.status_code == 201
+
+        res = post_tx(client, pid, type="IN", qty=5, request_id=rid)
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "DUPLICATE_REQUEST_ID"
+
+        history = client.get(f"/api/v1/products/{pid}/transactions")
+        assert history.json()["pagination"]["total"] == 1
+
+    def test_batch_dup_rollback_preserves_stock(self, client):
+        """After batch rollback due to dup request_id, stock is unchanged."""
+        pid = create_item_id(client)
+        rid = str(uuid.uuid4())
+        post_tx(client, pid, type="IN", qty=100, request_id=rid)
+
+        post_batch(client, pid, [
+            {"type": "IN", "qty": 10},
+            {"type": "IN", "qty": 20, "request_id": rid},
+        ])
+
+        res = post_tx(client, pid, type="IN", qty=1)
+        assert res.json()["stock"]["on_hand"] == 101
+
+
+# ── Tx history filters / pagination ──────────────────────────────
+
+class TestTxHistory:
+    def test_filter_by_type(self, client):
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=50)
+        post_tx(client, pid, type="OUT", qty=10)
+
+        res = client.get(f"/api/v1/products/{pid}/transactions?type=IN")
+        assert res.json()["pagination"]["total"] == 1
+        assert res.json()["data"][0]["type"] == "IN"
+
+    def test_filter_by_bucket(self, client):
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=50)
+        post_tx(client, pid, type="RESERVE", qty=10)
+
+        res = client.get(f"/api/v1/products/{pid}/transactions?bucket=RESERVED")
+        assert res.json()["pagination"]["total"] == 1
+        assert res.json()["data"][0]["bucket"] == "RESERVED"
+
+    def test_pagination(self, client):
+        pid = create_item_id(client)
+        for _ in range(5):
+            post_tx(client, pid, type="IN", qty=1)
+
+        res = client.get(f"/api/v1/products/{pid}/transactions?per_page=2&page=1")
+        body = res.json()
+        assert len(body["data"]) == 2
+        assert body["pagination"]["total"] == 5
+
+    def test_product_not_found(self, client):
+        fake = uuid.uuid4()
+        res = client.get(f"/api/v1/products/{fake}/transactions")
+        assert res.status_code == 404
+
+
+# ── Response shape ───────────────────────────────────────────────
+
+class TestTxResponseShape:
+    def test_single_tx_response_fields(self, client):
+        pid = create_item_id(client)
+        res = post_tx(client, pid, type="IN", qty=10, reason="入荷")
+        assert res.status_code == 201
+        data = res.json()["data"]
+        assert data["product_id"] == pid
+        assert data["type"] == "IN"
+        assert data["bucket"] == "ON_HAND"
+        assert data["qty_delta"] == 10
+        assert data["reason"] == "入荷"
+        assert "id" in data
+        assert "created_at" in data
+
+    def test_stock_zero_before_any_tx(self, client):
+        """Brand-new item with no Tx → stock returns to 0."""
+        pid = create_item_id(client)
+        post_tx(client, pid, type="IN", qty=1)
+        res = post_tx(client, pid, type="OUT", qty=1)
+        stock = res.json()["stock"]
+        assert stock == {"available": 0, "on_hand": 0, "reserved": 0}

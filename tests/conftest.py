@@ -9,7 +9,8 @@ from app.main import app
 
 
 @pytest.fixture()
-def client():
+def _test_engine():
+    """In-memory SQLite engine shared by client and db_session."""
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -23,7 +24,13 @@ def client():
         cursor.close()
 
     Base.metadata.create_all(bind=engine)
-    TestSession = sessionmaker(bind=engine)
+    yield engine
+    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture()
+def client(_test_engine):
+    TestSession = sessionmaker(bind=_test_engine)
 
     def override_get_db():
         db = TestSession()
@@ -38,4 +45,12 @@ def client():
         yield c
 
     app.dependency_overrides.clear()
-    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture()
+def db_session(_test_engine):
+    """Direct DB session sharing the same in-memory engine as client."""
+    Session = sessionmaker(bind=_test_engine)
+    db = Session()
+    yield db
+    db.close()

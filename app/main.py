@@ -6,7 +6,8 @@ from sqlalchemy import text
 
 from app.database import Base, engine
 from app.errors import AppError
-from app.routers import items, transactions
+from app.routers import dashboard, items, transactions
+from app.routers import stock as stock_views
 
 import app.models  # noqa: F401 – register all models with Base.metadata
 
@@ -22,6 +23,8 @@ with engine.begin() as conn:
 app = FastAPI(title="PipeStock", version="0.1.0")
 app.include_router(items.router)
 app.include_router(transactions.router)
+app.include_router(dashboard.router)
+app.include_router(stock_views.router)
 
 
 @app.exception_handler(AppError)

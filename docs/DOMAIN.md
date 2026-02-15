@@ -66,11 +66,21 @@ Available = On-hand - Reserved
 
 在庫テーブルは持たない。常に Tx の集計から算出する。
 
+### 3.1 Reserved 内訳 (ダッシュボード用)
+
+```
+reserved_total          = SUM(qty_delta) WHERE bucket = RESERVED
+reserved_pending_return = SUM(qty_delta) WHERE bucket = RESERVED AND reason = 'RETURN_PENDING'
+reserved_pending_order  = SUM(qty_delta) WHERE bucket = RESERVED AND reason = 'ORDER_PENDING_SHIPMENT'
+```
+
+> reserved_pending_order は将来用。現 Phase では常に 0。
+
 ## 4. 在庫金額・重量の算出
 
 ```
-在庫金額 = On-hand × unit_price
-在庫重量 = On-hand × unit_weight
+在庫金額 (stock_value) = On-hand × unit_price
+在庫重量               = On-hand × unit_weight
 ```
 
 ## 5. Tx タイプと想定される操作

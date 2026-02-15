@@ -135,3 +135,56 @@ class TxBatchEnvelope(BaseModel):
 class TxListEnvelope(BaseModel):
     data: list[TxResponse]
     pagination: PaginationMeta
+
+
+# ---------- Dashboard / Stock ----------
+
+class DashboardStockItem(BaseModel):
+    product_id: uuid.UUID
+    code: str
+    name: str
+    unit: str
+    unit_price: float
+    on_hand: int
+    reserved_total: int
+    reserved_pending_return: int
+    reserved_pending_order: int
+    available: int
+    stock_value: float
+
+
+class OthersTotalSummary(BaseModel):
+    on_hand: int
+    reserved_total: int
+    reserved_pending_return: int
+    reserved_pending_order: int
+    available: int
+    stock_value: float
+
+
+class DashboardTopEnvelope(BaseModel):
+    data: list[DashboardStockItem]
+    others_total: OthersTotalSummary
+
+
+class StockListItem(BaseModel):
+    product_id: uuid.UUID
+    code: str
+    name: str
+    spec: Optional[str]
+    unit: str
+    unit_price: float
+    unit_weight: Optional[float]
+    reorder_point: int
+    on_hand: int
+    reserved_total: int
+    reserved_pending_return: int
+    reserved_pending_order: int
+    available: int
+    stock_value: float
+    needs_reorder: bool
+
+
+class StockListEnvelope(BaseModel):
+    data: list[StockListItem]
+    pagination: PaginationMeta

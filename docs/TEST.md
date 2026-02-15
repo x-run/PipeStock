@@ -102,16 +102,34 @@
 
 ---
 
-## 4. 在庫サマリ (Phase 4)
+## 4. Dashboard / Stock 一覧 (Phase 4)
+
+### 4.1 Dashboard Stock Top API
 
 | # | テスト内容 | 期待結果 |
 |---|-----------|---------|
-| S-1 | 在庫サマリ一覧取得 | 全商品の On-hand, Reserved, Available が正しい |
-| S-2 | 在庫金額 = On-hand × unit_price | 金額が正しく算出される |
-| S-3 | 在庫重量 = On-hand × unit_weight | 重量が正しく算出される |
-| S-4 | 発注点以下フィルタ | Available <= reorder_point の商品のみ返る |
-| S-5 | 商品詳細に stock 情報が含まれる | on_hand, reserved, available が返る |
-| S-6 | Tx が0件の商品の在庫サマリ | 全て 0 で返る |
+| D-1 | metric=qty で TopN 取得 | on_hand 降順で limit 件返る, others_total が残りの合計 |
+| D-2 | metric=value で TopN 取得 | stock_value 降順で返る |
+| D-3 | デフォルト limit (10) | 商品数 < limit なら全件 data に入り, others_total は 0 |
+| D-4 | 商品 0 件 | data=[], others_total 全 0 |
+| D-5 | 非アクティブ商品除外 | include_inactive=false でアクティブのみ |
+| D-6 | 返品検品中の内訳 | reserved_pending_return に RETURN_PENDING 分が分離 |
+
+### 4.2 Stock 一覧 API
+
+| # | テスト内容 | 期待結果 |
+|---|-----------|---------|
+| S-1 | デフォルト一覧取得 | qty_desc 順で全商品返る |
+| S-2 | q 検索 (code) | code 部分一致で絞れる |
+| S-3 | q 検索 (name) | name 部分一致で絞れる |
+| S-4 | sort=value_desc | stock_value 降順で返る |
+| S-5 | sort=qty_asc | on_hand 昇順で返る |
+| S-6 | ページネーション | page/per_page が機能する |
+| S-7 | needs_reorder = true | available <= reorder_point で true |
+| S-8 | needs_reorder = false | available > reorder_point で false |
+| S-9 | 返品検品中の内訳 | reserved_pending_return に RETURN_PENDING 分が分離 |
+| S-10 | Tx 0 件の商品 | 全指標 0 で返る |
+| S-11 | 非アクティブ商品除外 | include_inactive=false でアクティブのみ |
 
 ---
 

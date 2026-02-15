@@ -455,20 +455,19 @@ Reserved ロックを解除すると同時に物理在庫を減らす。
 
 ---
 
-## 4. Stock エンドポイント
+## 4. Dashboard エンドポイント
 
-### GET /api/v1/stock
+### GET /api/v1/dashboard/stock/top
 
-全商品の在庫サマリ一覧を取得する (ダッシュボード用)。
+ダッシュボード棒グラフ用。在庫上位 N 商品と「その他」合計を返す。
 
 **クエリパラメータ:**
 
-| パラメータ | 型 | 必須 | 説明 |
-|-----------|-----|------|------|
-| page | integer | No | ページ番号 |
-| per_page | integer | No | 1ページあたりの件数 |
-| q | string | No | code または name での部分一致検索 |
-| below_reorder | boolean | No | true: 発注点以下の商品のみ |
+| パラメータ | 型 | 必須 | デフォルト | 説明 |
+|-----------|-----|------|----------|------|
+| metric | string | No | qty | `qty`: on_hand 降順 / `value`: stock_value 降順 |
+| limit | integer | No | 10 | 上位 N 件 (1〜20) |
+| include_inactive | boolean | No | false | true: 非アクティブ商品も含む |
 
 **レスポンス: 200 OK**
 
@@ -476,20 +475,79 @@ Reserved ロックを解除すると同時に物理在庫を減らす。
 {
   "data": [
     {
-      "product": {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
-        "code": "PIPE-001",
-        "name": "ステンレスパイプ 25A",
-        "unit": "本",
-        "unit_price": 2500,
-        "reorder_point": 10
-      },
-      "available": 80,
-      "on_hand": 100,
-      "reserved": 20,
-      "total_value": 250000,
-      "total_weight": 320.0,
-      "below_reorder": false
+      "product_id": "550e8400-e29b-41d4-a716-446655440000",
+      "code": "PIPE-001",
+      "name": "ステンレスパイプ 25A",
+      "unit": "本",
+      "unit_price": 2500,
+      "on_hand": 120,
+      "reserved_total": 30,
+      "reserved_pending_return": 10,
+      "reserved_pending_order": 5,
+      "available": 90,
+      "stock_value": 300000
+    }
+  ],
+  "others_total": {
+    "on_hand": 50,
+    "reserved_total": 5,
+    "reserved_pending_return": 0,
+    "reserved_pending_order": 0,
+    "available": 45,
+    "stock_value": 125000
+  }
+}
+```
+
+**フィールド説明:**
+
+| フィールド | 説明 |
+|-----------|------|
+| reserved_total | bucket=RESERVED の qty_delta SUM |
+| reserved_pending_return | reserved_total のうち reason="RETURN_PENDING" の分 |
+| reserved_pending_order | reserved_total のうち reason="ORDER_PENDING_SHIPMENT" の分 (将来用, 現在は 0) |
+| stock_value | on_hand × unit_price |
+| others_total | TopN に含まれない商品の合計値 |
+
+---
+
+## 5. Stock 一覧エンドポイント
+
+### GET /api/v1/stock
+
+在庫一覧を取得する (検索・ソート・ページング)。ダッシュボードの「もっと見る」先。
+
+**クエリパラメータ:**
+
+| パラメータ | 型 | 必須 | デフォルト | 説明 |
+|-----------|-----|------|----------|------|
+| q | string | No | — | code / name / spec 部分一致検索 |
+| sort | string | No | qty_desc | `qty_desc` / `qty_asc` / `value_desc` / `value_asc` / `updated_desc` |
+| page | integer | No | 1 | ページ番号 |
+| per_page | integer | No | 20 | 1ページあたりの件数 (最大 100) |
+| include_inactive | boolean | No | false | true: 非アクティブ商品も含む |
+
+**レスポンス: 200 OK**
+
+```json
+{
+  "data": [
+    {
+      "product_id": "550e8400-e29b-41d4-a716-446655440000",
+      "code": "PIPE-001",
+      "name": "ステンレスパイプ 25A",
+      "spec": "SUS304 / 外径34mm",
+      "unit": "本",
+      "unit_price": 2500,
+      "unit_weight": 3.2,
+      "reorder_point": 10,
+      "on_hand": 120,
+      "reserved_total": 30,
+      "reserved_pending_return": 10,
+      "reserved_pending_order": 0,
+      "available": 90,
+      "stock_value": 300000,
+      "needs_reorder": false
     }
   ],
   "pagination": {
@@ -499,3 +557,10 @@ Reserved ロックを解除すると同時に物理在庫を減らす。
   }
 }
 ```
+
+**フィールド説明:**
+
+| フィールド | 説明 |
+|-----------|------|
+| needs_reorder | `available <= reorder_point` の場合 true |
+| その他 | Dashboard Top と同じ指標定義 |

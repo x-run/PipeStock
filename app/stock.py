@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, update
+from sqlalchemy import and_, case, func, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -196,3 +196,190 @@ def create_txs(
         available=new_available,
     )
     return created, new_stock
+
+
+# ------------------------------------------------------------------
+# Bulk stock breakdown (dashboard / stock list)
+# ------------------------------------------------------------------
+
+def _stock_breakdown_subquery(db: Session):
+    """Per-item stock aggregation with reason-level breakdown."""
+    return (
+        db.query(
+            InventoryTx.item_id.label("item_id"),
+            func.coalesce(func.sum(case(
+                (InventoryTx.bucket == "ON_HAND", InventoryTx.qty_delta),
+                else_=0,
+            )), 0).label("on_hand"),
+            func.coalesce(func.sum(case(
+                (InventoryTx.bucket == "RESERVED", InventoryTx.qty_delta),
+                else_=0,
+            )), 0).label("reserved_total"),
+            func.coalesce(func.sum(case(
+                (and_(InventoryTx.bucket == "RESERVED",
+                      InventoryTx.reason == "RETURN_PENDING"),
+                 InventoryTx.qty_delta),
+                else_=0,
+            )), 0).label("reserved_pending_return"),
+            func.coalesce(func.sum(case(
+                (and_(InventoryTx.bucket == "RESERVED",
+                      InventoryTx.reason == "ORDER_PENDING_SHIPMENT"),
+                 InventoryTx.qty_delta),
+                else_=0,
+            )), 0).label("reserved_pending_order"),
+        )
+        .group_by(InventoryTx.item_id)
+        .subquery()
+    )
+
+
+def _row_to_stock_item(row, *, include_detail: bool = False) -> dict:
+    """Convert a query row to a stock item dict."""
+    oh = int(row.on_hand)
+    rt = int(row.reserved_total)
+    avail = oh - rt
+    d: dict = {
+        "product_id": row.product_id,
+        "code": row.code,
+        "name": row.name,
+        "unit": row.unit,
+        "unit_price": row.unit_price,
+        "on_hand": oh,
+        "reserved_total": rt,
+        "reserved_pending_return": int(row.reserved_pending_return),
+        "reserved_pending_order": int(row.reserved_pending_order),
+        "available": avail,
+        "stock_value": oh * row.unit_price,
+    }
+    if include_detail:
+        d["spec"] = row.spec
+        d["unit_weight"] = row.unit_weight
+        d["reorder_point"] = row.reorder_point
+        d["needs_reorder"] = avail <= row.reorder_point
+    return d
+
+
+def query_stock_top(
+    db: Session,
+    *,
+    metric: str = "qty",
+    limit: int = 10,
+    include_inactive: bool = False,
+) -> tuple[list[dict], dict]:
+    """Return (top_items, others_total) for dashboard bar chart."""
+    sq = _stock_breakdown_subquery(db)
+
+    on_hand_expr = func.coalesce(sq.c.on_hand, 0)
+    stock_value_expr = on_hand_expr * Item.unit_price
+
+    query = (
+        db.query(
+            Item.id.label("product_id"),
+            Item.code,
+            Item.name,
+            Item.unit,
+            Item.unit_price,
+            on_hand_expr.label("on_hand"),
+            func.coalesce(sq.c.reserved_total, 0).label("reserved_total"),
+            func.coalesce(sq.c.reserved_pending_return, 0).label("reserved_pending_return"),
+            func.coalesce(sq.c.reserved_pending_order, 0).label("reserved_pending_order"),
+        )
+        .outerjoin(sq, Item.id == sq.c.item_id)
+    )
+
+    if not include_inactive:
+        query = query.filter(Item.active == True)  # noqa: E712
+
+    sort_expr = stock_value_expr.desc() if metric == "value" else on_hand_expr.desc()
+    rows = query.order_by(sort_expr, Item.code).all()
+
+    top = [_row_to_stock_item(r) for r in rows[:limit]]
+
+    others: dict = {
+        "on_hand": 0, "reserved_total": 0,
+        "reserved_pending_return": 0, "reserved_pending_order": 0,
+        "available": 0, "stock_value": 0.0,
+    }
+    for r in rows[limit:]:
+        oh = int(r.on_hand)
+        rt = int(r.reserved_total)
+        others["on_hand"] += oh
+        others["reserved_total"] += rt
+        others["reserved_pending_return"] += int(r.reserved_pending_return)
+        others["reserved_pending_order"] += int(r.reserved_pending_order)
+        others["available"] += oh - rt
+        others["stock_value"] += oh * r.unit_price
+
+    return top, others
+
+
+def query_stock_list(
+    db: Session,
+    *,
+    q: str | None = None,
+    sort: str = "qty_desc",
+    page: int = 1,
+    per_page: int = 20,
+    include_inactive: bool = False,
+) -> tuple[list[dict], int]:
+    """Return (items, total_count) for stock list with search/sort/pagination."""
+    sq = _stock_breakdown_subquery(db)
+
+    on_hand_expr = func.coalesce(sq.c.on_hand, 0)
+    reserved_total_expr = func.coalesce(sq.c.reserved_total, 0)
+    stock_value_expr = on_hand_expr * Item.unit_price
+
+    # --- Count (items only, no join needed) ---
+    count_q = db.query(func.count(Item.id))
+    if not include_inactive:
+        count_q = count_q.filter(Item.active == True)  # noqa: E712
+    if q:
+        pattern = f"%{q}%"
+        count_q = count_q.filter(or_(
+            Item.code.ilike(pattern),
+            Item.name.ilike(pattern),
+            Item.spec.ilike(pattern),
+        ))
+    total = count_q.scalar()
+
+    # --- Data ---
+    data_q = (
+        db.query(
+            Item.id.label("product_id"),
+            Item.code,
+            Item.name,
+            Item.spec,
+            Item.unit,
+            Item.unit_price,
+            Item.unit_weight,
+            Item.reorder_point,
+            on_hand_expr.label("on_hand"),
+            reserved_total_expr.label("reserved_total"),
+            func.coalesce(sq.c.reserved_pending_return, 0).label("reserved_pending_return"),
+            func.coalesce(sq.c.reserved_pending_order, 0).label("reserved_pending_order"),
+        )
+        .outerjoin(sq, Item.id == sq.c.item_id)
+    )
+
+    if not include_inactive:
+        data_q = data_q.filter(Item.active == True)  # noqa: E712
+    if q:
+        pattern = f"%{q}%"
+        data_q = data_q.filter(or_(
+            Item.code.ilike(pattern),
+            Item.name.ilike(pattern),
+            Item.spec.ilike(pattern),
+        ))
+
+    sort_map = {
+        "qty_desc": on_hand_expr.desc(),
+        "qty_asc": on_hand_expr.asc(),
+        "value_desc": stock_value_expr.desc(),
+        "value_asc": stock_value_expr.asc(),
+        "updated_desc": Item.updated_at.desc(),
+    }
+    data_q = data_q.order_by(sort_map.get(sort, on_hand_expr.desc()), Item.code)
+
+    rows = data_q.offset((page - 1) * per_page).limit(per_page).all()
+
+    return [_row_to_stock_item(r, include_detail=True) for r in rows], total

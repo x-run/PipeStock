@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ---------- Request ----------
@@ -83,18 +83,21 @@ class ErrorEnvelope(BaseModel):
 # ---------- Transaction ----------
 
 class TxCreate(BaseModel):
-    type: Literal["IN", "OUT", "ADJUST"]
-    bucket: Literal["ON_HAND", "RESERVED"]
-    qty_delta: int
+    type: Literal["IN", "OUT", "ADJUST", "RESERVE", "UNRESERVE"]
+    qty: int = Field(..., ge=1)
+    direction: Optional[Literal["INCREASE", "DECREASE"]] = None
     reason: Optional[str] = Field(None, max_length=500)
     request_id: Optional[uuid.UUID] = None
 
-    @field_validator("qty_delta")
-    @classmethod
-    def qty_delta_nonzero(cls, v: int) -> int:
-        if v == 0:
-            raise ValueError("qty_delta must not be 0")
-        return v
+    @model_validator(mode="after")
+    def check_direction(self) -> "TxCreate":
+        if self.type == "ADJUST":
+            if self.direction is None:
+                raise ValueError("ADJUST requires direction (INCREASE or DECREASE)")
+        else:
+            if self.direction is not None:
+                raise ValueError(f"{self.type} does not accept direction")
+        return self
 
 
 class TxBatchCreate(BaseModel):

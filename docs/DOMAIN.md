@@ -11,7 +11,8 @@
 | Reserved | 注文済み未発送で引き当てられた保留在庫 |
 | Available | 出庫可能な在庫数量 (= On-hand - Reserved) |
 | Reorder Point | 発注点。Available がこの値以下になったら補充を検討する |
-| qty_delta | Tx による在庫の変化量 (正: 増加 / 負: 減少) |
+| qty | API 入力の数量 (常に正数, >= 1) |
+| qty_delta | DB 上の在庫変化量 (正: 増加 / 負: 減少)。サーバーが type から自動生成 |
 
 ## 2. エンティティ
 
@@ -34,13 +35,24 @@
 
 ### 2.2 Transaction (Tx)
 
+**API 入力 (TxCreate):**
+
+| フィールド | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| type | enum | Yes | IN, OUT, ADJUST, RESERVE, UNRESERVE |
+| qty | integer | Yes | 数量 (>= 1, 常に正数) |
+| direction | enum | ADJUST時のみ | INCREASE, DECREASE (ADJUST 以外では指定不可) |
+| reason | string | No | 変更理由・備考 |
+
+**DB レコード (inventory_tx):**
+
 | フィールド | 型 | 必須 | 説明 |
 |-----------|-----|------|------|
 | id | UUID | Yes | 主キー |
 | product_id | UUID | Yes | 対象商品 (FK → Product) |
-| type | enum | Yes | IN, OUT, ADJUST |
-| bucket | enum | Yes | ON_HAND, RESERVED |
-| qty_delta | integer | Yes | 変化量 (正 or 負) |
+| type | enum | Yes | IN, OUT, ADJUST, RESERVE, UNRESERVE |
+| bucket | enum | Yes | ON_HAND, RESERVED (サーバーが type から自動決定) |
+| qty_delta | integer | Yes | 変化量 (正 or 負, サーバーが type + direction から自動生成) |
 | reason | string | No | 変更理由・備考 |
 | created_at | timestamp | Yes | 作成日時 |
 
@@ -63,18 +75,27 @@ Available = On-hand - Reserved
 
 ## 5. Tx タイプと想定される操作
 
-| 操作 | type | bucket | qty_delta | 説明 |
-|------|------|--------|-----------|------|
-| 入庫 | IN | ON_HAND | +N | 商品が倉庫に届いた |
-| 出庫 | OUT | ON_HAND | -N | 商品を倉庫から出した |
-| 引当 | IN | RESERVED | +N | 注文を受けて在庫を確保 |
-| 引当解除 (出荷) | OUT | RESERVED | -N | 出荷完了で Reserved を解放 |
-| 棚卸補正 (増) | ADJUST | ON_HAND | +N | 実棚と帳簿の差異を補正 |
-| 棚卸補正 (減) | ADJUST | ON_HAND | -N | 実棚と帳簿の差異を補正 |
+### 安全設計: クライアントは正数 qty のみを送り、サーバーが符号と bucket を決定する
 
-> **注意**: 引当 → 出荷の一連の流れでは、以下の2つの Tx を同時に作成する:
-> 1. `OUT / ON_HAND / -N` (物理在庫から出庫)
-> 2. `OUT / RESERVED / -N` (引当を解放)
+| 操作 | API type | API direction | → DB bucket | → DB qty_delta | 説明 |
+|------|----------|---------------|-------------|----------------|------|
+| 入庫 | IN | — | ON_HAND | +qty | 商品が倉庫に届いた |
+| 出庫 | OUT | — | ON_HAND | -qty | 商品を倉庫から出した |
+| 引当 | RESERVE | — | RESERVED | +qty | 注文を受けて在庫を確保 |
+| 引当解除 | UNRESERVE | — | RESERVED | -qty | 出荷完了で Reserved を解放 |
+| 棚卸補正 (増) | ADJUST | INCREASE | ON_HAND | +qty | 実棚と帳簿の差異を補正 |
+| 棚卸補正 (減) | ADJUST | DECREASE | ON_HAND | -qty | 実棚と帳簿の差異を補正 |
+
+> **注意**: 引当 → 出荷の一連の流れでは、以下の2つの Tx を batch で同時に作成する:
+> 1. `OUT` (qty=N) → DB: ON_HAND / -N (物理在庫から出庫)
+> 2. `UNRESERVE` (qty=N) → DB: RESERVED / -N (引当を解放)
+
+### 不正な組み合わせ (400 エラー)
+
+| パターン | 理由 |
+|----------|------|
+| ADJUST で direction なし | 増減の方向が不明 |
+| IN/OUT/RESERVE/UNRESERVE で direction あり | type から符号が一意に決まるため不要 |
 
 ## 6. 不変条件 (Invariants)
 
@@ -82,32 +103,44 @@ Available = On-hand - Reserved
 |----|---------|---------------|
 | INV-1 | On-hand >= 0 | Tx 作成時 |
 | INV-2 | Reserved >= 0 | Tx 作成時 |
-| INV-3 | Available >= 0 | Available を減少させる Tx 作成時 (OUT/ON_HAND, IN/RESERVED) |
+| INV-3 | Available >= 0 | Available を減少させる Tx 作成時 (OUT, RESERVE, ADJUST/DECREASE) |
 | INV-4 | Available = On-hand - Reserved | 常時 (計算で保証) |
 | INV-5 | Tx は作成後に変更・削除できない | アプリケーション層で制御 |
-| INV-6 | ADJUST は ON_HAND バケットのみに適用可能 | Tx 作成時 |
-| INV-7 | qty_delta != 0 | Tx 作成時 |
+| INV-6 | ADJUST は ON_HAND バケットのみに適用可能 | type マッピングで構造的に保証 |
+| INV-7 | qty >= 1 (正数のみ受付) | スキーマバリデーション |
 | INV-8 | 非アクティブ商品に対する Tx は作成不可 | Tx 作成時 |
 
 ### INV-3 の詳細: Available チェック
 
-Available を減少させる操作は以下の2パターン:
+Available を減少させる操作は以下の3パターン:
 
-**パターン A: 出庫 (OUT / ON_HAND / -N)**
+**パターン A: 出庫 (type=OUT, qty=N)**
 ```
+サーバー処理: qty_delta = -N, bucket = ON_HAND
 事前チェック:
   current_available = current_on_hand - current_reserved
   IF current_available < N THEN
-    ERROR "Available 不足: 要求={N}, Available={current_available}"
+    ERROR "Available 不足"
   END IF
 ```
 
-**パターン B: 引当 (IN / RESERVED / +N)**
+**パターン B: 引当 (type=RESERVE, qty=N)**
 ```
+サーバー処理: qty_delta = +N, bucket = RESERVED
 事前チェック:
   current_available = current_on_hand - current_reserved
   IF current_available < N THEN
-    ERROR "Available 不足: 引当要求={N}, Available={current_available}"
+    ERROR "Available 不足"
+  END IF
+```
+
+**パターン C: 棚卸補正・減 (type=ADJUST, direction=DECREASE, qty=N)**
+```
+サーバー処理: qty_delta = -N, bucket = ON_HAND
+事前チェック:
+  new_available = (current_on_hand - N) - current_reserved
+  IF new_available < 0 THEN
+    ERROR "Available 不足"
   END IF
 ```
 

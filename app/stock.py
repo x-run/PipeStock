@@ -54,6 +54,28 @@ def calc_stock(db: Session, item_id: uuid.UUID) -> StockLevel:
 
 
 # ------------------------------------------------------------------
+# Resolve TxCreate → (bucket, qty_delta) — single source of truth
+# ------------------------------------------------------------------
+
+_TX_RESOLVE: dict[str, tuple[str, int]] = {
+    # type → (bucket, sign multiplier)
+    "IN":        ("ON_HAND",   +1),
+    "OUT":       ("ON_HAND",   -1),
+    "RESERVE":   ("RESERVED",  +1),
+    "UNRESERVE": ("RESERVED",  -1),
+}
+
+
+def resolve_tx(tx: TxCreate) -> tuple[str, str, int]:
+    """Derive (db_type, bucket, qty_delta) from a safe TxCreate input."""
+    if tx.type == "ADJUST":
+        sign = +1 if tx.direction == "INCREASE" else -1
+        return "ADJUST", "ON_HAND", sign * tx.qty
+    bucket, sign = _TX_RESOLVE[tx.type]
+    return tx.type, bucket, sign * tx.qty
+
+
+# ------------------------------------------------------------------
 # Transaction creation (single + batch share the same path)
 # ------------------------------------------------------------------
 
@@ -76,20 +98,14 @@ def create_txs(
             400,
         )
 
-    # INV-6: ADJUST only for ON_HAND
-    for tx in tx_inputs:
-        if tx.type == "ADJUST" and tx.bucket != "ON_HAND":
-            raise AppError(
-                "VALIDATION_ERROR",
-                "ADJUST は ON_HAND バケットのみに適用可能です",
-                400,
-            )
+    # Resolve all inputs to (type, bucket, qty_delta)
+    resolved = [resolve_tx(tx) for tx in tx_inputs]
 
     # --- project new stock after ALL txs ---
     current = calc_stock(db, item.id)
 
-    delta_on_hand = sum(tx.qty_delta for tx in tx_inputs if tx.bucket == "ON_HAND")
-    delta_reserved = sum(tx.qty_delta for tx in tx_inputs if tx.bucket == "RESERVED")
+    delta_on_hand = sum(qd for _, b, qd in resolved if b == "ON_HAND")
+    delta_reserved = sum(qd for _, b, qd in resolved if b == "RESERVED")
 
     new_on_hand = current.on_hand + delta_on_hand
     new_reserved = current.reserved + delta_reserved
@@ -121,14 +137,14 @@ def create_txs(
 
     # --- persist ---
     created: list[InventoryTx] = []
-    for tx in tx_inputs:
+    for tx_input, (db_type, bucket, qty_delta) in zip(tx_inputs, resolved):
         entity = InventoryTx(
             item_id=item.id,
-            type=tx.type,
-            bucket=tx.bucket,
-            qty_delta=tx.qty_delta,
-            reason=tx.reason,
-            request_id=tx.request_id,
+            type=db_type,
+            bucket=bucket,
+            qty_delta=qty_delta,
+            reason=tx_input.reason,
+            request_id=tx_input.request_id,
         )
         db.add(entity)
         created.append(entity)

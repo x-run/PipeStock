@@ -213,7 +213,7 @@
 |-----------|-----|------|------|
 | page | integer | No | ページ番号 |
 | per_page | integer | No | 1ページあたりの件数 |
-| type | string | No | IN / OUT / ADJUST でフィルタ |
+| type | string | No | IN / OUT / ADJUST / RESERVE / UNRESERVE でフィルタ |
 | bucket | string | No | ON_HAND / RESERVED でフィルタ |
 
 **レスポンス: 200 OK**
@@ -245,31 +245,43 @@
 
 Tx を新規作成する。在庫が変動する。
 
+**安全設計**: クライアントは正数 `qty` のみを送信し、`type` によってサーバーが符号 (`qty_delta`) と `bucket` を自動決定する。
+
 **リクエストボディ:**
 
 ```json
 {
   "type": "IN",
-  "bucket": "ON_HAND",
-  "qty_delta": 50,
+  "qty": 50,
   "reason": "仕入先A社より入荷"
 }
 ```
 
 | フィールド | 型 | 必須 | バリデーション |
 |-----------|-----|------|---------------|
-| type | enum | Yes | IN, OUT, ADJUST |
-| bucket | enum | Yes | ON_HAND, RESERVED |
-| qty_delta | integer | Yes | != 0 |
+| type | enum | Yes | IN, OUT, ADJUST, RESERVE, UNRESERVE |
+| qty | integer | Yes | >= 1 (正数のみ) |
+| direction | enum | ADJUST時のみ | INCREASE, DECREASE |
 | reason | string | No | 最大500文字 |
+
+**type → DB マッピング:**
+
+| type | direction | → bucket | → qty_delta |
+|------|-----------|----------|-------------|
+| IN | — | ON_HAND | +qty |
+| OUT | — | ON_HAND | -qty |
+| RESERVE | — | RESERVED | +qty |
+| UNRESERVE | — | RESERVED | -qty |
+| ADJUST | INCREASE | ON_HAND | +qty |
+| ADJUST | DECREASE | ON_HAND | -qty |
 
 **ビジネスルール:**
 
-- type=ADJUST の場合、bucket は ON_HAND のみ許可
-- type=OUT / bucket=ON_HAND の場合、Available チェックを実施
-  - `Available (= On-hand - Reserved) >= |qty_delta|` でなければ 409 エラー
-- type=IN / bucket=RESERVED の場合、Available チェックを実施
-  - `Available (= On-hand - Reserved) >= qty_delta` でなければ 409 エラー
+- ADJUST には `direction` が必須 (なければ 400)
+- IN/OUT/RESERVE/UNRESERVE に `direction` を指定すると 400
+- type=OUT → Available チェック: `Available >= qty` でなければ 409
+- type=RESERVE → Available チェック: `Available >= qty` でなければ 409
+- type=ADJUST, direction=DECREASE → Available チェック: `new_available >= 0` でなければ 409
 - 対象商品が active=false の場合、400 エラー
 
 **レスポンス: 201 Created**
@@ -307,14 +319,12 @@ Tx を新規作成する。在庫が変動する。
   "transactions": [
     {
       "type": "OUT",
-      "bucket": "ON_HAND",
-      "qty_delta": -30,
+      "qty": 30,
       "reason": "出荷 注文#1234"
     },
     {
-      "type": "OUT",
-      "bucket": "RESERVED",
-      "qty_delta": -30,
+      "type": "UNRESERVE",
+      "qty": 30,
       "reason": "出荷 注文#1234"
     }
   ]
@@ -324,14 +334,14 @@ Tx を新規作成する。在庫が変動する。
 | フィールド | 型 | 必須 | バリデーション |
 |-----------|-----|------|---------------|
 | transactions | array | Yes | 1〜10件 |
-| transactions[].type | enum | Yes | IN, OUT, ADJUST |
-| transactions[].bucket | enum | Yes | ON_HAND, RESERVED |
-| transactions[].qty_delta | integer | Yes | != 0 |
+| transactions[].type | enum | Yes | IN, OUT, ADJUST, RESERVE, UNRESERVE |
+| transactions[].qty | integer | Yes | >= 1 |
+| transactions[].direction | enum | ADJUST時のみ | INCREASE, DECREASE |
 | transactions[].reason | string | No | 最大500文字 |
 
 **ビジネスルール:**
 
-- 全 Tx に対して個別 Tx と同じバリデーションを適用
+- 全 Tx に対して個別 Tx と同じバリデーション (type/direction の組み合わせチェック含む) を適用
 - 全 Tx の結果を合算した上で不変条件を検証する (中間状態では判定しない)
 
 **レスポンス: 201 Created**
@@ -351,7 +361,7 @@ Tx を新規作成する。在庫が変動する。
     {
       "id": "660e8400-e29b-41d4-a716-446655440002",
       "product_id": "550e8400-e29b-41d4-a716-446655440000",
-      "type": "OUT",
+      "type": "UNRESERVE",
       "bucket": "RESERVED",
       "qty_delta": -30,
       "reason": "出荷 注文#1234",

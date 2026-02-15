@@ -173,11 +173,12 @@
 │ Reserved: 20 本 (薄い色)                 │
 ├─────────────────────────────────────────┤
 │ 操作を選択:                              │
-│ ○ 入庫 (IN / ON_HAND)                   │
-│ ○ 出庫 (OUT / ON_HAND)                  │
-│ ○ 引当 (IN / RESERVED)                  │
-│ ○ 引当解除・出荷 (OUT / ON_HAND & RESERVED)│
-│ ○ 棚卸補正 (ADJUST / ON_HAND)           │
+│ ○ 入庫 (type=IN)                        │
+│ ○ 出庫 (type=OUT)                       │
+│ ○ 引当 (type=RESERVE)                   │
+│ ○ 引当解除・出荷 (type=OUT + UNRESERVE)  │
+│ ○ 棚卸補正・増 (type=ADJUST, INCREASE)   │
+│ ○ 棚卸補正・減 (type=ADJUST, DECREASE)   │
 ├─────────────────────────────────────────┤
 │ 数量 *         [     ]                   │
 │ 理由           [                    ]    │
@@ -187,7 +188,8 @@
 ```
 
 **要件:**
-- 操作をわかりやすいラベルで選択させる (内部的に type / bucket / qty_delta の符号を決定)
-- 「引当解除・出荷」は2つの Tx を同時に作成する操作
-- 出庫系の操作時は Available チェックの結果をリアルタイムで警告表示
+- 操作をわかりやすいラベルで選択させる (API には type + qty のみ送信、符号はサーバーが決定)
+- 「引当解除・出荷」は batch API で OUT + UNRESERVE の2つの Tx を同時に作成
+- 棚卸補正は INCREASE / DECREASE を選択させ、direction として送信
+- 出庫系・引当系の操作時は Available チェックの結果をリアルタイムで警告表示
 - 登録成功後は商品詳細画面に戻る

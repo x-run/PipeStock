@@ -38,12 +38,12 @@
 
 | # | テスト内容 | 期待結果 |
 |---|-----------|---------|
-| T-1 | IN / ON_HAND で入庫 | On-hand が増加する |
-| T-2 | OUT / ON_HAND で出庫 (Available 十分) | On-hand が減少する |
-| T-3 | IN / RESERVED で引当 | Reserved が増加、Available が減少する |
-| T-4 | OUT / RESERVED で引当解除 | Reserved が減少、Available が増加する |
-| T-5 | ADJUST / ON_HAND で棚卸補正 (増) | On-hand が増加する |
-| T-6 | ADJUST / ON_HAND で棚卸補正 (減) | On-hand が減少する |
+| T-1 | type=IN (qty=50) で入庫 | On-hand が増加する |
+| T-2 | type=OUT (qty=30) で出庫 (Available 十分) | On-hand が減少する |
+| T-3 | type=RESERVE (qty=20) で引当 | Reserved が増加、Available が減少する |
+| T-4 | type=UNRESERVE (qty=10) で引当解除 | Reserved が減少、Available が増加する |
+| T-5 | type=ADJUST, direction=INCREASE (qty=5) | On-hand が増加する |
+| T-6 | type=ADJUST, direction=DECREASE (qty=2) | On-hand が減少する |
 | T-7 | 複数 Tx 後の在庫計算が正しい | SUM 集計が合っている |
 | T-8 | Tx 履歴を取得 | 新しい順に返る |
 
@@ -51,18 +51,42 @@
 
 | # | 不変条件 | テスト内容 | 期待結果 |
 |---|---------|-----------|---------|
-| T-9 | INV-3 | Available 不足で出庫 | 409 INSUFFICIENT_AVAILABLE |
-| T-10 | INV-3 | Available ぴったりで出庫 | 成功 (境界値) |
-| T-11 | INV-3 | Available=0 で出庫 (qty=1) | 409 エラー |
-| T-12 | INV-6 | ADJUST / RESERVED で作成 | 400 VALIDATION_ERROR |
-| T-13 | INV-7 | qty_delta=0 で作成 | 400 VALIDATION_ERROR |
+| T-9 | INV-3 | Available 不足で OUT | 409 INSUFFICIENT_AVAILABLE |
+| T-10 | INV-3 | Available ぴったりで OUT | 成功 (境界値) |
+| T-11 | INV-3 | Available=0 で OUT (qty=1) | 409 エラー |
+| T-12 | INV-6/7 | ADJUST で direction なし | 400 VALIDATION_ERROR |
+| T-13 | INV-7 | qty=0 で作成 | 400 VALIDATION_ERROR |
 | T-14 | INV-8 | 非アクティブ商品に Tx 作成 | 400 PRODUCT_INACTIVE |
-| T-15 | INV-1 | On-hand が負になる操作 | エラー |
-| T-16 | INV-2 | Reserved が負になる操作 | エラー |
+| T-15 | INV-1 | On-hand が負になる ADJUST/DECREASE | 409 エラー |
+| T-16 | INV-2 | Reserved が負になる UNRESERVE | 409 エラー |
 | T-17 | INV-5 | Tx の更新を試みる | 許可されない (エンドポイント自体がない) |
 | T-18 | INV-5 | Tx の削除を試みる | 許可されない (エンドポイント自体がない) |
-| T-19 | INV-3 | Available を超える引当 (IN/RESERVED) | 409 INSUFFICIENT_AVAILABLE |
-| T-20 | INV-3 | Available ぴったりの引当 (IN/RESERVED) | 成功 (境界値) |
+| T-19 | INV-3 | Available を超える RESERVE | 409 INSUFFICIENT_AVAILABLE |
+| T-20 | INV-3 | Available ぴったりの RESERVE | 成功 (境界値) |
+
+### 3.3 符号安全性テスト (Sign Safety)
+
+| # | テスト内容 | 期待結果 |
+|---|-----------|---------|
+| SS-1 | IN → DB qty_delta が正 | qty_delta == +qty |
+| SS-2 | OUT → DB qty_delta が負 | qty_delta == -qty |
+| SS-3 | RESERVE → DB qty_delta が正, bucket=RESERVED | qty_delta == +qty |
+| SS-4 | UNRESERVE → DB qty_delta が負, bucket=RESERVED | qty_delta == -qty |
+| SS-5 | ADJUST/INCREASE → DB qty_delta が正 | qty_delta == +qty |
+| SS-6 | ADJUST/DECREASE → DB qty_delta が負 | qty_delta == -qty |
+| SS-7 | 負の qty を送信 | 400 エラー |
+| SS-8 | batch の符号正確性 | OUT=-N, UNRESERVE=-N |
+
+### 3.4 不正な組み合わせテスト (Invalid Combinations)
+
+| # | テスト内容 | 期待結果 |
+|---|-----------|---------|
+| IC-1 | IN + direction=INCREASE | 400 エラー |
+| IC-2 | OUT + direction=DECREASE | 400 エラー |
+| IC-3 | RESERVE + direction=INCREASE | 400 エラー |
+| IC-4 | UNRESERVE + direction=DECREASE | 400 エラー |
+| IC-5 | ADJUST + direction なし | 400 エラー |
+| IC-6 | 不正な type 値 | 400 エラー |
 
 ---
 
@@ -99,11 +123,11 @@
 
 ```
 1. 商品「PIPE-001」を登録
-2. 入庫: IN / ON_HAND / +100
+2. 入庫: type=IN, qty=100
    → On-hand=100, Reserved=0, Available=100
-3. 引当: IN / RESERVED / +30
+3. 引当: type=RESERVE, qty=30
    → On-hand=100, Reserved=30, Available=70
-4. 出荷: OUT / ON_HAND / -30 + OUT / RESERVED / -30
+4. 出荷 (batch): type=OUT qty=30 + type=UNRESERVE qty=30
    → On-hand=70, Reserved=0, Available=70
 5. 在庫サマリで確認
    → 金額・重量が正しく算出されている
@@ -113,12 +137,12 @@
 
 ```
 1. 商品「PIPE-002」を登録
-2. 入庫: IN / ON_HAND / +10
-3. 引当: IN / RESERVED / +8
+2. 入庫: type=IN, qty=10
+3. 引当: type=RESERVE, qty=8
    → Available=2
-4. 出庫: OUT / ON_HAND / -5
+4. 出庫: type=OUT, qty=5
    → エラー: Available 不足 (要求=5, Available=2)
-5. 出庫: OUT / ON_HAND / -2
+5. 出庫: type=OUT, qty=2
    → 成功: Available=0
 ```
 
@@ -126,9 +150,9 @@
 
 ```
 1. 商品「PIPE-003」を登録
-2. 入庫: IN / ON_HAND / +50
+2. 入庫: type=IN, qty=50
 3. 棚卸で実数が 48 と判明
-4. 補正: ADJUST / ON_HAND / -2
+4. 補正: type=ADJUST, direction=DECREASE, qty=2
    → On-hand=48, Available=48
 ```
 
@@ -136,11 +160,11 @@
 
 ```
 1. 商品「PIPE-004」を登録
-2. 入庫: IN / ON_HAND / +10
+2. 入庫: type=IN, qty=10
    → Available=10
-3. 引当: IN / RESERVED / +10
+3. 引当: type=RESERVE, qty=10
    → Available=0
-4. 引当: IN / RESERVED / +1
+4. 引当: type=RESERVE, qty=1
    → エラー: Available 不足 (引当要求=1, Available=0)
 ```
 
@@ -148,8 +172,8 @@
 
 ```
 1. 商品「PIPE-005」を登録
-2. 入庫: IN / ON_HAND / +10
+2. 入庫: type=IN, qty=10
 3. 商品を論理削除 (active=false)
-4. 入庫: IN / ON_HAND / +5
+4. 入庫: type=IN, qty=5
    → エラー: PRODUCT_INACTIVE
 ```

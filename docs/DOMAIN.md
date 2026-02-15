@@ -10,7 +10,7 @@
 | On-hand | 倉庫に物理的に存在する在庫数量 |
 | Reserved | 注文済み未発送で引き当てられた保留在庫 |
 | Available | 出庫可能な在庫数量 (= On-hand - Reserved) |
-| Reorder Point | 発注点。Available がこの値を下回ったら補充を検討する |
+| Reorder Point | 発注点。Available がこの値以下になったら補充を検討する |
 | qty_delta | Tx による在庫の変化量 (正: 増加 / 負: 減少) |
 
 ## 2. エンティティ
@@ -82,22 +82,32 @@ Available = On-hand - Reserved
 |----|---------|---------------|
 | INV-1 | On-hand >= 0 | Tx 作成時 |
 | INV-2 | Reserved >= 0 | Tx 作成時 |
-| INV-3 | Available >= 0 (出庫時) | OUT Tx 作成時 |
+| INV-3 | Available >= 0 | Available を減少させる Tx 作成時 (OUT/ON_HAND, IN/RESERVED) |
 | INV-4 | Available = On-hand - Reserved | 常時 (計算で保証) |
 | INV-5 | Tx は作成後に変更・削除できない | アプリケーション層で制御 |
 | INV-6 | ADJUST は ON_HAND バケットのみに適用可能 | Tx 作成時 |
 | INV-7 | qty_delta != 0 | Tx 作成時 |
 | INV-8 | 非アクティブ商品に対する Tx は作成不可 | Tx 作成時 |
 
-### INV-3 の詳細: 出庫時の Available チェック
+### INV-3 の詳細: Available チェック
 
+Available を減少させる操作は以下の2パターン:
+
+**パターン A: 出庫 (OUT / ON_HAND / -N)**
 ```
-出庫リクエスト: OUT / ON_HAND / -N
-
 事前チェック:
   current_available = current_on_hand - current_reserved
   IF current_available < N THEN
     ERROR "Available 不足: 要求={N}, Available={current_available}"
+  END IF
+```
+
+**パターン B: 引当 (IN / RESERVED / +N)**
+```
+事前チェック:
+  current_available = current_on_hand - current_reserved
+  IF current_available < N THEN
+    ERROR "Available 不足: 引当要求={N}, Available={current_available}"
   END IF
 ```
 

@@ -63,17 +63,19 @@ MVP を6つの Phase に分割して段階的に実装する。
 - [ ] 3-2. 在庫計算ロジック (SUM 集計による On-hand / Reserved / Available 算出)
 - [ ] 3-3. POST /api/v1/products/:product_id/transactions (Tx 作成)
 - [ ] 3-4. 不変条件 INV-1〜INV-8 のバリデーション実装
-- [ ] 3-5. Available 不足時のエラーハンドリング (INV-3)
+- [ ] 3-5. Available 不足時のエラーハンドリング (INV-3: OUT/ON_HAND および IN/RESERVED)
 - [ ] 3-6. ADJUST は ON_HAND のみバリデーション (INV-6)
 - [ ] 3-7. 非アクティブ商品への Tx 拒否 (INV-8)
 - [ ] 3-8. GET /api/v1/products/:product_id/transactions (履歴取得)
-- [ ] 3-9. Phase 3 のテスト作成・実行
+- [ ] 3-9. POST /api/v1/products/:product_id/transactions/batch (バッチ Tx 作成)
+- [ ] 3-10. Phase 3 のテスト作成・実行
 
 ### 完了条件
 
-- 全 Tx エンドポイントが API 仕様通りに動作する
+- 全 Tx エンドポイント (単体・バッチ) が API 仕様通りに動作する
 - 全不変条件が正しく検証される
-- Available 不足時に 409 エラーが返る
+- Available 不足時に 409 エラーが返る (出庫・引当の両方)
+- バッチ Tx が原子的に処理される (all-or-nothing)
 - Tx は作成のみ可能 (更新・削除不可)
 - テストが全件パスする
 

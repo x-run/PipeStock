@@ -147,9 +147,9 @@
     "created_at": "2026-01-15T09:00:00Z",
     "updated_at": "2026-01-15T09:00:00Z",
     "stock": {
+      "available": 80,
       "on_hand": 100,
       "reserved": 20,
-      "available": 80,
       "total_value": 250000,
       "total_weight": 320.0
     }
@@ -268,6 +268,8 @@ Tx を新規作成する。在庫が変動する。
 - type=ADJUST の場合、bucket は ON_HAND のみ許可
 - type=OUT / bucket=ON_HAND の場合、Available チェックを実施
   - `Available (= On-hand - Reserved) >= |qty_delta|` でなければ 409 エラー
+- type=IN / bucket=RESERVED の場合、Available チェックを実施
+  - `Available (= On-hand - Reserved) >= qty_delta` でなければ 409 エラー
 - 対象商品が active=false の場合、400 エラー
 
 **レスポンス: 201 Created**
@@ -284,9 +286,82 @@ Tx を新規作成する。在庫が変動する。
     "created_at": "2026-01-15T10:00:00Z"
   },
   "stock": {
+    "available": 80,
     "on_hand": 100,
-    "reserved": 20,
-    "available": 80
+    "reserved": 20
+  }
+}
+```
+
+---
+
+### POST /api/v1/products/:product_id/transactions/batch
+
+複数の Tx を原子的に作成する。引当解除・出荷のような複合操作で使用する。
+全 Tx が成功するか、全て失敗する (all-or-nothing)。
+
+**リクエストボディ:**
+
+```json
+{
+  "transactions": [
+    {
+      "type": "OUT",
+      "bucket": "ON_HAND",
+      "qty_delta": -30,
+      "reason": "出荷 注文#1234"
+    },
+    {
+      "type": "OUT",
+      "bucket": "RESERVED",
+      "qty_delta": -30,
+      "reason": "出荷 注文#1234"
+    }
+  ]
+}
+```
+
+| フィールド | 型 | 必須 | バリデーション |
+|-----------|-----|------|---------------|
+| transactions | array | Yes | 1〜10件 |
+| transactions[].type | enum | Yes | IN, OUT, ADJUST |
+| transactions[].bucket | enum | Yes | ON_HAND, RESERVED |
+| transactions[].qty_delta | integer | Yes | != 0 |
+| transactions[].reason | string | No | 最大500文字 |
+
+**ビジネスルール:**
+
+- 全 Tx に対して個別 Tx と同じバリデーションを適用
+- 全 Tx の結果を合算した上で不変条件を検証する (中間状態では判定しない)
+
+**レスポンス: 201 Created**
+
+```json
+{
+  "data": [
+    {
+      "id": "660e8400-e29b-41d4-a716-446655440001",
+      "product_id": "550e8400-e29b-41d4-a716-446655440000",
+      "type": "OUT",
+      "bucket": "ON_HAND",
+      "qty_delta": -30,
+      "reason": "出荷 注文#1234",
+      "created_at": "2026-01-15T14:00:00Z"
+    },
+    {
+      "id": "660e8400-e29b-41d4-a716-446655440002",
+      "product_id": "550e8400-e29b-41d4-a716-446655440000",
+      "type": "OUT",
+      "bucket": "RESERVED",
+      "qty_delta": -30,
+      "reason": "出荷 注文#1234",
+      "created_at": "2026-01-15T14:00:00Z"
+    }
+  ],
+  "stock": {
+    "available": 80,
+    "on_hand": 70,
+    "reserved": 0
   }
 }
 ```
@@ -305,6 +380,7 @@ Tx を新規作成する。在庫が変動する。
 |-----------|-----|------|------|
 | page | integer | No | ページ番号 |
 | per_page | integer | No | 1ページあたりの件数 |
+| q | string | No | code または name での部分一致検索 |
 | below_reorder | boolean | No | true: 発注点以下の商品のみ |
 
 **レスポンス: 200 OK**
@@ -321,9 +397,9 @@ Tx を新規作成する。在庫が変動する。
         "unit_price": 2500,
         "reorder_point": 10
       },
+      "available": 80,
       "on_hand": 100,
       "reserved": 20,
-      "available": 80,
       "total_value": 250000,
       "total_weight": 320.0,
       "below_reorder": false

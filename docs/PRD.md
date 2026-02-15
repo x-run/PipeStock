@@ -12,7 +12,7 @@
 - 在庫トランザクション (IN / OUT / ADJUST) の記録
 - バケット (ON_HAND / RESERVED) ごとの在庫計算
 - Available (= On-hand - Reserved) の自動算出
-- 出庫時の Available 不足バリデーション
+- 出庫・引当時の Available 不足バリデーション
 - 数量中心のダッシュボード
 
 ### Out of Scope (MVP 以降)

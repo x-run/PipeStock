@@ -10,12 +10,12 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import AppError
-from app.models import InventoryTx, Item
+from app.models import InventoryTx, Item, StockHead
 
 if TYPE_CHECKING:
     from app.schemas import TxCreate
@@ -98,6 +98,16 @@ def create_txs(
             400,
         )
 
+    # Read current optimistic-lock version
+    stock_head = db.query(StockHead).filter(StockHead.item_id == item.id).first()
+    if stock_head is None:
+        raise AppError(
+            "CONFLICT",
+            f"stock_heads レコードが見つかりません: {item.id}",
+            409,
+        )
+    expected_version = stock_head.version
+
     # Resolve all inputs to (type, bucket, qty_delta)
     resolved = [resolve_tx(tx) for tx in tx_inputs]
 
@@ -139,6 +149,21 @@ def create_txs(
     created: list[InventoryTx] = []
     try:
         with db.begin_nested():
+            # Optimistic lock: bump version WHERE version == expected
+            rows_updated = db.execute(
+                update(StockHead)
+                .where(StockHead.item_id == item.id)
+                .where(StockHead.version == expected_version)
+                .values(version=expected_version + 1)
+            ).rowcount
+
+            if rows_updated == 0:
+                raise AppError(
+                    "CONFLICT",
+                    "在庫の楽観ロック競合が発生しました。再試行してください。",
+                    409,
+                )
+
             for tx_input, (db_type, bucket, qty_delta) in zip(tx_inputs, resolved):
                 entity = InventoryTx(
                     item_id=item.id,
@@ -151,6 +176,8 @@ def create_txs(
                 db.add(entity)
                 created.append(entity)
             db.flush()
+    except AppError:
+        raise
     except IntegrityError:
         raise AppError(
             "DUPLICATE_REQUEST_ID",

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.errors import AppError
-from app.models import Item
+from app.models import Item, StockHead
 from app.schemas import (
     DeleteItemEnvelope,
     ItemCreate,
@@ -28,6 +28,8 @@ def create_item(body: ItemCreate, db: Session = Depends(get_db)):
     item = Item(**body.model_dump())
     db.add(item)
     try:
+        db.flush()  # generate item.id before creating StockHead
+        db.add(StockHead(item_id=item.id))
         db.commit()
     except IntegrityError:
         db.rollback()

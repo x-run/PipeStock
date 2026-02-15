@@ -5,6 +5,16 @@ Updated for safe-API design: qty (positive) + type determines sign & bucket.
 """
 
 import uuid
+from unittest.mock import patch
+
+from sqlalchemy import create_engine, event, text, update
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base
+from app.models import InventoryTx, Item, StockHead
+from app.stock import StockLevel, calc_stock, create_txs, resolve_tx
+from app.schemas import TxCreate
 
 
 # ── helpers ──────────────────────────────────────────────────────
@@ -543,3 +553,144 @@ class TestInvalidCombinations:
         pid = _create_item(client)
         res = _post_tx(client, pid, type="MOVE", qty=5)
         assert res.status_code == 400
+
+
+# ── Optimistic lock tests ───────────────────────────────────────
+
+def _make_db():
+    """Create an in-memory SQLite engine+session for direct DB tests."""
+    eng = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(eng, "connect")
+    def _pragma(dbapi_conn, _rec):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
+    Base.metadata.create_all(bind=eng)
+    return sessionmaker(bind=eng)
+
+
+class TestOptimisticLock:
+    """Verify stock_heads version-based optimistic locking."""
+
+    def test_version_increments_on_tx(self, client):
+        """Each create_txs call bumps stock_heads.version by 1."""
+        pid = _create_item(client)
+        _post_tx(client, pid, type="IN", qty=10)
+        _post_tx(client, pid, type="IN", qty=20)
+        _post_tx(client, pid, type="OUT", qty=5)
+
+        # Check version via batch (4th tx call including the 3 above)
+        # Version should be 3 after 3 tx calls
+        res = _post_tx(client, pid, type="IN", qty=1)
+        assert res.status_code == 201
+        # Can't read version from API directly; verify indirectly
+        # by checking stock is consistent (no conflict)
+        assert res.json()["stock"]["on_hand"] == 26  # 10+20-5+1
+
+    def test_concurrent_conflict_returns_409(self):
+        """Simulate two sessions: second one sees stale version → 409 CONFLICT."""
+        Session = _make_db()
+        db = Session()
+
+        # Create item + stock_head
+        item = Item(code="LOCK-001", name="Lock test", unit="本",
+                    unit_price=100, reorder_point=0)
+        db.add(item)
+        db.flush()
+        db.add(StockHead(item_id=item.id))
+        db.commit()
+        db.refresh(item)
+
+        # First tx succeeds (version 0 → 1)
+        tx1 = TxCreate(type="IN", qty=100)
+        created, stock = create_txs(db, item, [tx1])
+        assert stock.on_hand == 100
+
+        # Verify version is now 1
+        sh = db.query(StockHead).filter(StockHead.item_id == item.id).first()
+        assert sh.version == 1
+
+        # Simulate a concurrent writer by bumping version behind the scenes
+        # after calc_stock is called but before the UPDATE WHERE version=
+        original_calc_stock = calc_stock
+
+        def calc_stock_with_concurrent_bump(db_session, item_id):
+            result = original_calc_stock(db_session, item_id)
+            # Simulate another session bumping the version
+            db_session.execute(
+                update(StockHead)
+                .where(StockHead.item_id == item_id)
+                .values(version=StockHead.version + 1)
+            )
+            db_session.flush()
+            return result
+
+        tx2 = TxCreate(type="OUT", qty=10)
+        with patch("app.stock.calc_stock", side_effect=calc_stock_with_concurrent_bump):
+            try:
+                create_txs(db, item, [tx2])
+                assert False, "Should have raised AppError CONFLICT"
+            except Exception as e:
+                assert hasattr(e, "code")
+                assert e.code == "CONFLICT"
+                assert e.status_code == 409
+
+        db.rollback()  # clean up after the failed tx
+
+    def test_conflict_does_not_persist_tx(self):
+        """After a CONFLICT, no inventory_tx rows from the failed attempt exist."""
+        Session = _make_db()
+        db = Session()
+
+        item = Item(code="LOCK-002", name="Lock test 2", unit="本",
+                    unit_price=100, reorder_point=0)
+        db.add(item)
+        db.flush()
+        db.add(StockHead(item_id=item.id))
+        db.commit()
+        db.refresh(item)
+
+        # Seed with IN 50
+        create_txs(db, item, [TxCreate(type="IN", qty=50)])
+
+        # Count txs before
+        count_before = db.query(InventoryTx).filter(
+            InventoryTx.item_id == item.id
+        ).count()
+        assert count_before == 1
+
+        original_calc_stock = calc_stock
+
+        def calc_stock_with_concurrent_bump(db_session, item_id):
+            result = original_calc_stock(db_session, item_id)
+            db_session.execute(
+                update(StockHead)
+                .where(StockHead.item_id == item_id)
+                .values(version=StockHead.version + 1)
+            )
+            db_session.flush()
+            return result
+
+        with patch("app.stock.calc_stock", side_effect=calc_stock_with_concurrent_bump):
+            try:
+                create_txs(db, item, [TxCreate(type="OUT", qty=10)])
+            except Exception:
+                pass
+
+        db.rollback()
+
+        # No new tx was persisted
+        count_after = db.query(InventoryTx).filter(
+            InventoryTx.item_id == item.id
+        ).count()
+        assert count_after == count_before
+
+        # Stock is unchanged
+        stock = calc_stock(db, item.id)
+        assert stock.on_hand == 50

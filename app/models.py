@@ -59,3 +59,20 @@ class InventoryTx(Base):
         Index("ix_inventory_tx_item_occurred", "item_id", "occurred_at"),
         Index("ix_inventory_tx_bucket_occurred", "bucket", "occurred_at"),
     )
+
+
+class StockHead(Base):
+    """Optimistic-lock row for inventory transactions.
+
+    One row per item; version is bumped on every create_txs call.
+    """
+
+    __tablename__ = "stock_heads"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("items.id"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, onupdate=_utcnow
+    )

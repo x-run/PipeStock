@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 
 from app.database import Base, engine
 from app.errors import AppError
-from app.routers import items
+from app.routers import items, transactions
 
 import app.models  # noqa: F401 – register all models with Base.metadata
 
@@ -12,6 +12,7 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="PipeStock", version="0.1.0")
 app.include_router(items.router)
+app.include_router(transactions.router)
 
 
 @app.exception_handler(AppError)

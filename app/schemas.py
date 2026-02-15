@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ---------- Request ----------
@@ -78,3 +78,57 @@ class ErrorDetail(BaseModel):
 
 class ErrorEnvelope(BaseModel):
     error: ErrorDetail
+
+
+# ---------- Transaction ----------
+
+class TxCreate(BaseModel):
+    type: Literal["IN", "OUT", "ADJUST"]
+    bucket: Literal["ON_HAND", "RESERVED"]
+    qty_delta: int
+    reason: Optional[str] = Field(None, max_length=500)
+    request_id: Optional[uuid.UUID] = None
+
+    @field_validator("qty_delta")
+    @classmethod
+    def qty_delta_nonzero(cls, v: int) -> int:
+        if v == 0:
+            raise ValueError("qty_delta must not be 0")
+        return v
+
+
+class TxBatchCreate(BaseModel):
+    transactions: list[TxCreate] = Field(..., min_length=1, max_length=10)
+
+
+class TxResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: uuid.UUID
+    product_id: uuid.UUID = Field(validation_alias="item_id")
+    type: str
+    bucket: str
+    qty_delta: int
+    reason: Optional[str]
+    created_at: datetime = Field(validation_alias="occurred_at")
+
+
+class StockSummary(BaseModel):
+    available: int
+    on_hand: int
+    reserved: int
+
+
+class TxCreateEnvelope(BaseModel):
+    data: TxResponse
+    stock: StockSummary
+
+
+class TxBatchEnvelope(BaseModel):
+    data: list[TxResponse]
+    stock: StockSummary
+
+
+class TxListEnvelope(BaseModel):
+    data: list[TxResponse]
+    pagination: PaginationMeta

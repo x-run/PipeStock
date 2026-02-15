@@ -114,7 +114,7 @@ def create_txs(
     # INV-1
     if new_on_hand < 0:
         raise AppError(
-            "INSUFFICIENT_AVAILABLE",
+            "INSUFFICIENT_ON_HAND",
             f"On-hand 不足: 現在={current.on_hand}, 操作後={new_on_hand}",
             409,
         )
@@ -122,7 +122,7 @@ def create_txs(
     # INV-2
     if new_reserved < 0:
         raise AppError(
-            "INSUFFICIENT_AVAILABLE",
+            "INSUFFICIENT_RESERVED",
             f"Reserved 不足: 現在={current.reserved}, 操作後={new_reserved}",
             409,
         )
@@ -135,29 +135,30 @@ def create_txs(
             409,
         )
 
-    # --- persist ---
+    # --- persist atomically (SAVEPOINT) ---
     created: list[InventoryTx] = []
-    for tx_input, (db_type, bucket, qty_delta) in zip(tx_inputs, resolved):
-        entity = InventoryTx(
-            item_id=item.id,
-            type=db_type,
-            bucket=bucket,
-            qty_delta=qty_delta,
-            reason=tx_input.reason,
-            request_id=tx_input.request_id,
-        )
-        db.add(entity)
-        created.append(entity)
-
     try:
-        db.commit()
+        with db.begin_nested():
+            for tx_input, (db_type, bucket, qty_delta) in zip(tx_inputs, resolved):
+                entity = InventoryTx(
+                    item_id=item.id,
+                    type=db_type,
+                    bucket=bucket,
+                    qty_delta=qty_delta,
+                    reason=tx_input.reason,
+                    request_id=tx_input.request_id,
+                )
+                db.add(entity)
+                created.append(entity)
+            db.flush()
     except IntegrityError:
-        db.rollback()
         raise AppError(
-            "VALIDATION_ERROR",
+            "DUPLICATE_REQUEST_ID",
             "request_id が重複しています",
-            400,
+            409,
         )
+
+    db.commit()
 
     for entity in created:
         db.refresh(entity)

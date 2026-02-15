@@ -133,12 +133,14 @@ class TestTxNormal:
 # ── T-9 ~ T-20: invariant violations ────────────────────────────
 
 class TestTxInvariants:
-    # INV-3  OUT (Available不足)
+    # INV-3  OUT (Available不足, On-handは正)
     def test_t9_out_insufficient_available(self, client):
-        """Available insufficient for OUT → 409."""
+        """Available insufficient for OUT (on_hand OK, reserved constrains) → 409."""
         pid = _create_item(client)
         _post_tx(client, pid, type="IN", qty=10)
-        res = _post_tx(client, pid, type="OUT", qty=20)
+        _post_tx(client, pid, type="RESERVE", qty=8)
+        # on_hand=10, reserved=8, available=2 → OUT qty=5 makes available=-3
+        res = _post_tx(client, pid, type="OUT", qty=5)
         assert res.status_code == 409
         assert res.json()["error"]["code"] == "INSUFFICIENT_AVAILABLE"
 
@@ -182,19 +184,21 @@ class TestTxInvariants:
 
     # INV-1
     def test_t15_on_hand_negative(self, client):
-        """Operation that would make On-hand negative → error."""
+        """Operation that would make On-hand negative → 409 INSUFFICIENT_ON_HAND."""
         pid = _create_item(client)
         _post_tx(client, pid, type="IN", qty=5)
         res = _post_tx(client, pid, type="ADJUST", qty=10, direction="DECREASE")
         assert res.status_code == 409
+        assert res.json()["error"]["code"] == "INSUFFICIENT_ON_HAND"
 
     # INV-2
     def test_t16_reserved_negative(self, client):
-        """Operation that would make Reserved negative → error."""
+        """Operation that would make Reserved negative → 409 INSUFFICIENT_RESERVED."""
         pid = _create_item(client)
         _post_tx(client, pid, type="IN", qty=10)
         res = _post_tx(client, pid, type="UNRESERVE", qty=1)
         assert res.status_code == 409
+        assert res.json()["error"]["code"] == "INSUFFICIENT_RESERVED"
 
     # INV-5
     def test_t17_tx_update_not_allowed(self, client):
@@ -300,6 +304,76 @@ class TestBatchTx:
         ])
         assert res.status_code == 400
         assert res.json()["error"]["code"] == "PRODUCT_INACTIVE"
+
+    def test_batch_request_id_dup_external(self, client):
+        """Batch with request_id already in DB → entire batch rolls back."""
+        pid = _create_item(client)
+        dup_rid = str(uuid.uuid4())
+
+        # Seed: one tx with a specific request_id
+        res = _post_tx(client, pid, type="IN", qty=50, request_id=dup_rid)
+        assert res.status_code == 201
+
+        # Batch where second tx reuses the same request_id
+        res = _post_batch(client, pid, [
+            {"type": "IN", "qty": 10, "request_id": str(uuid.uuid4())},
+            {"type": "IN", "qty": 20, "request_id": dup_rid},
+        ])
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "DUPLICATE_REQUEST_ID"
+
+        # Nothing from the batch was persisted (all-or-nothing)
+        history = client.get(f"/api/v1/products/{pid}/transactions")
+        assert history.json()["pagination"]["total"] == 1  # only the seed
+
+    def test_batch_request_id_dup_within(self, client):
+        """Batch with duplicate request_ids within same batch → all-or-nothing."""
+        pid = _create_item(client)
+        _post_tx(client, pid, type="IN", qty=50)
+
+        same_rid = str(uuid.uuid4())
+        res = _post_batch(client, pid, [
+            {"type": "OUT", "qty": 5, "request_id": same_rid},
+            {"type": "OUT", "qty": 3, "request_id": same_rid},
+        ])
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "DUPLICATE_REQUEST_ID"
+
+        # Nothing from the batch was persisted
+        history = client.get(f"/api/v1/products/{pid}/transactions")
+        assert history.json()["pagination"]["total"] == 1  # only the seed IN
+
+    def test_single_request_id_dup(self, client):
+        """Single tx with duplicate request_id → 409."""
+        pid = _create_item(client)
+        rid = str(uuid.uuid4())
+
+        res = _post_tx(client, pid, type="IN", qty=10, request_id=rid)
+        assert res.status_code == 201
+
+        res = _post_tx(client, pid, type="IN", qty=5, request_id=rid)
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "DUPLICATE_REQUEST_ID"
+
+        # Original tx still intact, duplicate was rejected
+        history = client.get(f"/api/v1/products/{pid}/transactions")
+        assert history.json()["pagination"]["total"] == 1
+
+    def test_batch_dup_rollback_preserves_stock(self, client):
+        """After batch rollback due to dup request_id, stock is unchanged."""
+        pid = _create_item(client)
+        rid = str(uuid.uuid4())
+        _post_tx(client, pid, type="IN", qty=100, request_id=rid)
+
+        # This batch would add 30 to on_hand, but should fail and rollback
+        _post_batch(client, pid, [
+            {"type": "IN", "qty": 10},
+            {"type": "IN", "qty": 20, "request_id": rid},
+        ])
+
+        # Verify stock is still 100, not 130
+        res = _post_tx(client, pid, type="IN", qty=1)
+        assert res.json()["stock"]["on_hand"] == 101  # 100 + 1, not 130 + 1
 
 
 # ── Tx history filters / pagination ──────────────────────────────

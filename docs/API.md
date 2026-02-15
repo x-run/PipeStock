@@ -24,7 +24,10 @@
 | VALIDATION_ERROR | 400 | 入力値バリデーションエラー |
 | PRODUCT_NOT_FOUND | 404 | 商品が見つからない |
 | PRODUCT_INACTIVE | 400 | 非アクティブ商品への操作 |
-| INSUFFICIENT_AVAILABLE | 409 | Available 不足で出庫不可 |
+| INSUFFICIENT_ON_HAND | 409 | On-hand 不足 (INV-1) |
+| INSUFFICIENT_RESERVED | 409 | Reserved 不足 (INV-2) |
+| INSUFFICIENT_AVAILABLE | 409 | Available 不足 (INV-3) |
+| DUPLICATE_REQUEST_ID | 409 | request_id 重複 |
 | CONFLICT | 409 | 楽観ロック競合 |
 
 ---

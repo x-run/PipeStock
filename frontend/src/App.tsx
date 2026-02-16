@@ -1,8 +1,9 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { LayoutDashboard, List, ArrowLeftRight } from 'lucide-react';
+import { LayoutDashboard, List, ArrowLeftRight, Lock } from 'lucide-react';
 import DashboardPage from './pages/DashboardPage';
 import StockListPage from './pages/StockListPage';
 import TransactionsPage from './pages/TransactionsPage';
+import ReservesPage from './pages/ReservesPage';
 
 function Layout({ children }: { children: React.ReactNode }) {
   return (
@@ -53,6 +54,19 @@ function Layout({ children }: { children: React.ReactNode }) {
               <ArrowLeftRight className="w-4 h-4" />
               入出庫
             </NavLink>
+            <NavLink
+              to="/reserves"
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                  isActive
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`
+              }
+            >
+              <Lock className="w-4 h-4" />
+              引当
+            </NavLink>
           </nav>
         </div>
       </header>
@@ -71,6 +85,7 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/stock" element={<StockListPage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
+          <Route path="/reserves" element={<ReservesPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>

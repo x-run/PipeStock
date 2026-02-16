@@ -5,6 +5,8 @@ import type {
   TransactionRequest,
   BatchTransactionRequest,
   TransactionResponse,
+  CreateProductRequest,
+  CreateProductResponse,
 } from '../types/api';
 
 const BASE = '/api/v1';
@@ -56,6 +58,12 @@ export function fetchStockList(params: StockListParams = {}): Promise<StockListR
   if (params.per_page) sp.set('per_page', String(params.per_page));
   const qs = sp.toString();
   return get(`/stock${qs ? `?${qs}` : ''}`);
+}
+
+export function createProduct(
+  req: CreateProductRequest
+): Promise<CreateProductResponse> {
+  return post('/products', req);
 }
 
 export function createTransaction(

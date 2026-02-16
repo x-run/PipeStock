@@ -41,6 +41,37 @@ export interface StockByCategoryResponse {
   breakdown: CategoryBreakdownItem[];
 }
 
+// -- Products --
+
+export interface Product {
+  id: string;
+  code: string;
+  name: string;
+  spec: string | null;
+  unit: string;
+  unit_price: number;
+  unit_weight: number | null;
+  reorder_point: number;
+  active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateProductRequest {
+  code: string;
+  name: string;
+  spec?: string;
+  unit: string;
+  unit_price: number;
+  unit_weight?: number;
+  reorder_point: number;
+}
+
+export interface CreateProductResponse {
+  data: Product;
+}
+
 // -- Stock List --
 
 export interface StockListItem {

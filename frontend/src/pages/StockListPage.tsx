@@ -1,11 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Search, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, AlertTriangle, Plus } from 'lucide-react';
 import { fetchStockList, type StockListParams } from '../api/client';
-import type { StockListItem, PaginationMeta, Operation } from '../types/api';
+import type { StockListItem, PaginationMeta } from '../types/api';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
-import OperationsDropdown from '../components/OperationsDropdown';
 import TransactionModal from '../components/TransactionModal';
+import CreateProductModal from '../components/CreateProductModal';
+import Toast from '../components/Toast';
+import type { ToastProps } from '../components/Toast';
 
 type SortKey = 'qty_desc' | 'qty_asc' | 'value_desc' | 'value_asc' | 'updated_desc';
 const SORT_LABELS: Record<SortKey, string> = {
@@ -15,6 +17,8 @@ const SORT_LABELS: Record<SortKey, string> = {
   value_asc: '金額 少ない順',
   updated_desc: '更新日 新しい順',
 };
+
+type TransactionType = 'IN' | 'OUT';
 
 function extractCategory(name: string): string {
   return name.split(/[\s\u3000]+/)[0] || name;
@@ -28,8 +32,14 @@ export default function StockListPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Modals
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<StockListItem | null>(null);
-  const [selectedOperation, setSelectedOperation] = useState<Operation | null>(null);
+  const [selectedType, setSelectedType] = useState<TransactionType | null>(null);
+
+  // Toast
+  const [toast, setToast] = useState<Omit<ToastProps, 'onClose'> | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -54,19 +64,31 @@ export default function StockListPage() {
     setPage(1);
   };
 
-  const handleOpenModal = (product: StockListItem, operation: Operation) => {
-    setSelectedProduct(product);
-    setSelectedOperation(operation);
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
   };
 
-  const handleCloseModal = () => {
-    setSelectedProduct(null);
-    setSelectedOperation(null);
+  const handleCreateSuccess = () => {
+    setShowCreateModal(false);
+    load();
+    showToast('success', '商品を追加しました');
   };
 
   const handleTransactionSuccess = () => {
-    handleCloseModal();
-    load(); // Reload stock list
+    setSelectedProduct(null);
+    setSelectedType(null);
+    load();
+    showToast('success', '在庫を更新しました');
+  };
+
+  const handleOpenTransaction = (product: StockListItem, type: TransactionType) => {
+    setSelectedProduct(product);
+    setSelectedType(type);
+  };
+
+  const handleCloseTransaction = () => {
+    setSelectedProduct(null);
+    setSelectedType(null);
   };
 
   return (
@@ -92,6 +114,13 @@ export default function StockListPage() {
             <option key={k} value={k}>{v}</option>
           ))}
         </select>
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+        >
+          <Plus className="w-4 h-4" />
+          商品追加
+        </button>
       </div>
 
       {error && <ErrorMessage message={error} onRetry={load} />}
@@ -158,18 +187,17 @@ export default function StockListPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleOpenModal(item, 'IN')}
+                        onClick={() => handleOpenTransaction(item, 'IN')}
                         className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
                       >
                         入庫
                       </button>
                       <button
-                        onClick={() => handleOpenModal(item, 'OUT')}
+                        onClick={() => handleOpenTransaction(item, 'OUT')}
                         className="px-2 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
                       >
                         出庫
                       </button>
-                      <OperationsDropdown onSelect={(op) => handleOpenModal(item, op)} />
                     </div>
                   </td>
                 </tr>
@@ -206,13 +234,30 @@ export default function StockListPage() {
         </div>
       )}
 
+      {/* Create Product Modal */}
+      {showCreateModal && (
+        <CreateProductModal
+          onSuccess={handleCreateSuccess}
+          onClose={() => setShowCreateModal(false)}
+        />
+      )}
+
       {/* Transaction Modal */}
-      {selectedProduct && selectedOperation && (
+      {selectedProduct && selectedType && (
         <TransactionModal
           product={selectedProduct}
-          operation={selectedOperation}
+          type={selectedType}
           onSuccess={handleTransactionSuccess}
-          onClose={handleCloseModal}
+          onClose={handleCloseTransaction}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <Toast
+          type={toast.type}
+          message={toast.message}
+          onClose={() => setToast(null)}
         />
       )}
     </div>

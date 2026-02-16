@@ -14,6 +14,8 @@ from sqlalchemy import and_, case, func, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import re
+
 from app.errors import AppError
 from app.models import InventoryTx, Item, StockHead
 
@@ -383,3 +385,75 @@ def query_stock_list(
     rows = data_q.offset((page - 1) * per_page).limit(per_page).all()
 
     return [_row_to_stock_item(r, include_detail=True) for r in rows], total
+
+
+# ------------------------------------------------------------------
+# Category-based stock aggregation
+# ------------------------------------------------------------------
+
+_SPLIT_RE = re.compile(r"[\s\u3000]+")
+
+
+def _extract_category(name: str) -> str:
+    """Extract category from product name (first token, full-width space aware)."""
+    token = _SPLIT_RE.split(name, maxsplit=1)[0]
+    return token or name
+
+
+def query_stock_by_category(
+    db: Session,
+    *,
+    metric: str = "value",
+    limit: int = 10,
+) -> dict:
+    """Aggregate stock by category (first word of name) for pie chart.
+
+    Returns { total, breakdown: [{key, label, metric_value}] }.
+    """
+    sq = _stock_breakdown_subquery(db)
+
+    on_hand_expr = func.coalesce(sq.c.on_hand, 0)
+    reserved_expr = func.coalesce(sq.c.reserved_total, 0)
+
+    rows = (
+        db.query(
+            Item.name,
+            on_hand_expr.label("on_hand"),
+            reserved_expr.label("reserved_total"),
+            Item.unit_price,
+        )
+        .outerjoin(sq, Item.id == sq.c.item_id)
+        .filter(Item.active == True)  # noqa: E712
+        .all()
+    )
+
+    # Group by category in Python (category is a derived value, not in DB)
+    cat_map: dict[str, float] = {}
+    for r in rows:
+        cat = _extract_category(r.name)
+        oh = int(r.on_hand)
+        rt = int(r.reserved_total)
+        if metric == "value":
+            val = oh * r.unit_price
+        elif metric == "qty":
+            val = oh
+        elif metric == "available":
+            val = oh - rt
+        else:  # reserved
+            val = rt
+        cat_map[cat] = cat_map.get(cat, 0) + val
+
+    # Sort descending by metric_value
+    sorted_cats = sorted(cat_map.items(), key=lambda x: x[1], reverse=True)
+
+    total = sum(v for _, v in sorted_cats)
+
+    breakdown: list[dict] = []
+    for key, val in sorted_cats[:limit]:
+        breakdown.append({"key": key, "label": key, "metric_value": val})
+
+    if len(sorted_cats) > limit:
+        other_sum = sum(v for _, v in sorted_cats[limit:])
+        breakdown.append({"key": "OTHER", "label": "その他", "metric_value": other_sum})
+
+    return {"total": total, "breakdown": breakdown}

@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from app.database import Base, engine
 from app.errors import AppError
-from app.routers import dashboard, items, sales, transactions
+from app.routers import dashboard, items, transactions
 from app.routers import stock as stock_views
 
 import app.models  # noqa: F401 – register all models with Base.metadata
@@ -25,7 +25,6 @@ app.include_router(items.router)
 app.include_router(transactions.router)
 app.include_router(dashboard.router)
 app.include_router(stock_views.router)
-app.include_router(sales.router)
 
 
 @app.exception_handler(AppError)

@@ -78,23 +78,3 @@ class StockHead(Base):
     )
 
 
-class SalesEvent(Base):
-    __tablename__ = "sales_events"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
-    type: Mapped[str] = mapped_column(String(10), nullable=False)
-    amount_yen: Mapped[int] = mapped_column(Integer, nullable=False)
-    product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("items.id"), nullable=True
-    )
-    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    request_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, unique=True, nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
-
-    __table_args__ = (
-        Index("ix_sales_events_occurred", "occurred_at"),
-        Index("ix_sales_events_product", "product_id"),
-    )

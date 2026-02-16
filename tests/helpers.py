@@ -38,8 +38,3 @@ def post_batch(client, item_id, txs):
     )
 
 
-def post_sale(client, **kw):
-    """POST a single sales event."""
-    payload = {"type": "SALE", "amount_yen": 1000}
-    payload.update(kw)
-    return client.post("/api/v1/sales", json=payload)

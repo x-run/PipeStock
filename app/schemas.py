@@ -144,13 +144,13 @@ class DashboardStockItem(BaseModel):
     code: str
     name: str
     unit: str
-    unit_price: float
     on_hand: int
     reserved_total: int
     reserved_pending_return: int
     reserved_pending_order: int
     available: int
-    stock_value: float
+    reorder_point: int
+    needs_reorder: bool
 
 
 class OthersTotalSummary(BaseModel):
@@ -159,7 +159,6 @@ class OthersTotalSummary(BaseModel):
     reserved_pending_return: int
     reserved_pending_order: int
     available: int
-    stock_value: float
 
 
 class DashboardTopEnvelope(BaseModel):

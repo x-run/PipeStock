@@ -245,34 +245,32 @@ def _row_to_stock_item(row, *, include_detail: bool = False) -> dict:
         "code": row.code,
         "name": row.name,
         "unit": row.unit,
-        "unit_price": row.unit_price,
         "on_hand": oh,
         "reserved_total": rt,
         "reserved_pending_return": int(row.reserved_pending_return),
         "reserved_pending_order": int(row.reserved_pending_order),
         "available": avail,
-        "stock_value": oh * row.unit_price,
+        "reorder_point": row.reorder_point,
+        "needs_reorder": avail <= row.reorder_point,
     }
     if include_detail:
         d["spec"] = row.spec
+        d["unit_price"] = row.unit_price
         d["unit_weight"] = row.unit_weight
-        d["reorder_point"] = row.reorder_point
-        d["needs_reorder"] = avail <= row.reorder_point
+        d["stock_value"] = oh * row.unit_price
     return d
 
 
 def query_stock_top(
     db: Session,
     *,
-    metric: str = "qty",
     limit: int = 10,
     include_inactive: bool = False,
 ) -> tuple[list[dict], dict]:
-    """Return (top_items, others_total) for dashboard bar chart."""
+    """Return (top_items, others_total) for dashboard bar chart (qty-only)."""
     sq = _stock_breakdown_subquery(db)
 
     on_hand_expr = func.coalesce(sq.c.on_hand, 0)
-    stock_value_expr = on_hand_expr * Item.unit_price
 
     query = (
         db.query(
@@ -280,7 +278,7 @@ def query_stock_top(
             Item.code,
             Item.name,
             Item.unit,
-            Item.unit_price,
+            Item.reorder_point,
             on_hand_expr.label("on_hand"),
             func.coalesce(sq.c.reserved_total, 0).label("reserved_total"),
             func.coalesce(sq.c.reserved_pending_return, 0).label("reserved_pending_return"),
@@ -292,15 +290,14 @@ def query_stock_top(
     if not include_inactive:
         query = query.filter(Item.active == True)  # noqa: E712
 
-    sort_expr = stock_value_expr.desc() if metric == "value" else on_hand_expr.desc()
-    rows = query.order_by(sort_expr, Item.code).all()
+    rows = query.order_by(on_hand_expr.desc(), Item.code).all()
 
     top = [_row_to_stock_item(r) for r in rows[:limit]]
 
     others: dict = {
         "on_hand": 0, "reserved_total": 0,
         "reserved_pending_return": 0, "reserved_pending_order": 0,
-        "available": 0, "stock_value": 0.0,
+        "available": 0,
     }
     for r in rows[limit:]:
         oh = int(r.on_hand)
@@ -310,7 +307,6 @@ def query_stock_top(
         others["reserved_pending_return"] += int(r.reserved_pending_return)
         others["reserved_pending_order"] += int(r.reserved_pending_order)
         others["available"] += oh - rt
-        others["stock_value"] += oh * r.unit_price
 
     return top, others
 

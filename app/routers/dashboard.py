@@ -21,13 +21,12 @@ router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 @router.get("/stock/top", response_model=DashboardTopEnvelope)
 def stock_top(
-    metric: Literal["qty", "value"] = Query("qty"),
     limit: int = Query(10, ge=1, le=20),
     include_inactive: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     top_items, others = query_stock_top(
-        db, metric=metric, limit=limit, include_inactive=include_inactive,
+        db, limit=limit, include_inactive=include_inactive,
     )
     return DashboardTopEnvelope(
         data=[DashboardStockItem(**item) for item in top_items],

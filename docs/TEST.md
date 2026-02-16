@@ -108,12 +108,13 @@
 
 | # | テスト内容 | 期待結果 |
 |---|-----------|---------|
-| D-1 | metric=qty で TopN 取得 | on_hand 降順で limit 件返る, others_total が残りの合計 |
-| D-2 | metric=value で TopN 取得 | stock_value 降順で返る |
-| D-3 | デフォルト limit (10) | 商品数 < limit なら全件 data に入り, others_total は 0 |
-| D-4 | 商品 0 件 | data=[], others_total 全 0 |
-| D-5 | 非アクティブ商品除外 | include_inactive=false でアクティブのみ |
-| D-6 | 返品検品中の内訳 | reserved_pending_return に RETURN_PENDING 分が分離 |
+| D-1 | TopN 取得 (数量固定) | on_hand 降順で limit 件返る, others_total が残りの合計 |
+| D-2 | デフォルト limit (10) | 商品数 < limit なら全件 data に入り, others_total は 0 |
+| D-3 | 商品 0 件 | data=[], others_total 全 0 |
+| D-4 | 非アクティブ商品除外 | include_inactive=false でアクティブのみ |
+| D-5 | 返品検品中の内訳 | reserved_pending_return に RETURN_PENDING 分が分離 |
+| D-6 | needs_reorder = true | available <= reorder_point で true |
+| D-7 | needs_reorder = false | available > reorder_point で false |
 
 ### 4.2 Stock 一覧 API
 

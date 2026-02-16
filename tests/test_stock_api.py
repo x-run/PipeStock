@@ -1,24 +1,23 @@
 """Phase 4 tests — Dashboard Stock Top API + Stock List API.
 
-Test IDs (S-*) map to docs/TEST.md §4.
+Test IDs (D-*, S-*) map to docs/TEST.md §4.
 """
 
 from tests.helpers import create_item_id, post_batch, post_tx
 
 
-# ── Helpers ─────────────────────────────────────────────────────────
+# -- Helpers ─────────────────────────────────────────────────────────
 
 
 def _seed_three_items(client):
-    """Create 3 items with distinct on_hand and stock_value.
+    """Create 3 items with distinct on_hand.
 
     Returns (a_id, b_id, c_id) where:
-      A: on_hand=100, price=1000  → value=100_000
-      B: on_hand=50,  price=5000  → value=250_000
-      C: on_hand=200, price=200   → value= 40_000
+      A: on_hand=100, price=1000, reorder_point=5
+      B: on_hand=50,  price=5000, reorder_point=5
+      C: on_hand=200, price=200,  reorder_point=5
 
-    qty sort:   C(200) > A(100) > B(50)
-    value sort: B(250k) > A(100k) > C(40k)
+    qty sort: C(200) > A(100) > B(50)
     """
     a_id = create_item_id(
         client, code="A-001", name="Item A", unit_price=1000, reorder_point=5,
@@ -38,7 +37,7 @@ def _seed_three_items(client):
     return a_id, b_id, c_id
 
 
-# ── Dashboard Stock Top ────────────────────────────────────────────
+# -- Dashboard Stock Top ────────────────────────────────────────────
 
 
 class TestDashboardStockTop:
@@ -47,7 +46,7 @@ class TestDashboardStockTop:
         """Top N by on_hand DESC; others_total aggregates the rest."""
         _seed_three_items(client)
 
-        res = client.get("/api/v1/dashboard/stock/top?metric=qty&limit=2")
+        res = client.get("/api/v1/dashboard/stock/top?limit=2")
         assert res.status_code == 200
         body = res.json()
 
@@ -56,32 +55,16 @@ class TestDashboardStockTop:
         # C(200) > A(100)
         assert data[0]["code"] == "C-003"
         assert data[0]["on_hand"] == 200
-        assert data[0]["stock_value"] == 200 * 200
         assert data[1]["code"] == "A-001"
         assert data[1]["on_hand"] == 100
 
         # others = B only
         others = body["others_total"]
         assert others["on_hand"] == 50
-        assert others["stock_value"] == 50 * 5000
         assert others["available"] == 50
 
-    def test_top_value_order(self, client):
-        """Top N by stock_value (on_hand * unit_price) DESC."""
-        _seed_three_items(client)
-
-        res = client.get("/api/v1/dashboard/stock/top?metric=value&limit=2")
-        assert res.status_code == 200
-        data = res.json()["data"]
-
-        # B(250k) > A(100k)
-        assert data[0]["code"] == "B-002"
-        assert data[0]["stock_value"] == 250_000
-        assert data[1]["code"] == "A-001"
-        assert data[1]["stock_value"] == 100_000
-
     def test_top_default_limit(self, client):
-        """Default limit=10; fewer items → all in data, others empty."""
+        """Default limit=10; fewer items -> all in data, others empty."""
         _seed_three_items(client)
 
         res = client.get("/api/v1/dashboard/stock/top")
@@ -91,7 +74,7 @@ class TestDashboardStockTop:
         assert body["others_total"]["on_hand"] == 0
 
     def test_top_no_items(self, client):
-        """No items → empty data, zero others."""
+        """No items -> empty data, zero others."""
         res = client.get("/api/v1/dashboard/stock/top")
         assert res.status_code == 200
         body = res.json()
@@ -103,16 +86,15 @@ class TestDashboardStockTop:
         a_id, b_id, c_id = _seed_three_items(client)
 
         # Deactivate C (highest on_hand)
-        item = client.get(f"/api/v1/products/{c_id}").json()["data"]
         client.delete(f"/api/v1/products/{c_id}")
 
-        res = client.get("/api/v1/dashboard/stock/top?metric=qty&limit=10")
+        res = client.get("/api/v1/dashboard/stock/top?limit=10")
         codes = [d["code"] for d in res.json()["data"]]
         assert "C-003" not in codes
 
         # include_inactive=true brings it back
         res = client.get(
-            "/api/v1/dashboard/stock/top?metric=qty&limit=10&include_inactive=true"
+            "/api/v1/dashboard/stock/top?limit=10&include_inactive=true"
         )
         codes = [d["code"] for d in res.json()["data"]]
         assert "C-003" in codes
@@ -139,8 +121,31 @@ class TestDashboardStockTop:
         assert item["reserved_pending_order"] == 0
         assert item["available"] == 95
 
+    def test_needs_reorder_in_top(self, client):
+        """needs_reorder is true when available <= reorder_point."""
+        pid = create_item_id(
+            client, code="REORD", name="Low Stock", reorder_point=50,
+        )
+        post_tx(client, pid, type="IN", qty=50)
 
-# ── Stock List ─────────────────────────────────────────────────────
+        res = client.get("/api/v1/dashboard/stock/top")
+        item = next(d for d in res.json()["data"] if d["code"] == "REORD")
+        assert item["needs_reorder"] is True
+        assert item["reorder_point"] == 50
+
+    def test_needs_reorder_false_in_top(self, client):
+        """needs_reorder is false when available > reorder_point."""
+        pid = create_item_id(
+            client, code="SAFE", name="Safe Stock", reorder_point=5,
+        )
+        post_tx(client, pid, type="IN", qty=100)
+
+        res = client.get("/api/v1/dashboard/stock/top")
+        item = next(d for d in res.json()["data"] if d["code"] == "SAFE")
+        assert item["needs_reorder"] is False
+
+
+# -- Stock List ─────────────────────────────────────────────────────
 
 
 class TestStockList:
@@ -210,7 +215,7 @@ class TestStockList:
 
     def test_needs_reorder_flag(self, client):
         """needs_reorder is true when available <= reorder_point."""
-        # reorder_point=50, on_hand=50, available=50 → needs_reorder=true (<=)
+        # reorder_point=50, on_hand=50, available=50 -> needs_reorder=true (<=)
         pid = create_item_id(
             client, code="REORDER", name="Low Stock", reorder_point=50,
         )

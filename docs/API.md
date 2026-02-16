@@ -459,13 +459,12 @@ Reserved ロックを解除すると同時に物理在庫を減らす。
 
 ### GET /api/v1/dashboard/stock/top
 
-ダッシュボード棒グラフ用。在庫上位 N 商品と「その他」合計を返す。
+ダッシュボード在庫棒グラフ用。on_hand 降順で上位 N 商品と「その他」合計を返す。
 
 **クエリパラメータ:**
 
 | パラメータ | 型 | 必須 | デフォルト | 説明 |
 |-----------|-----|------|----------|------|
-| metric | string | No | qty | `qty`: on_hand 降順 / `value`: stock_value 降順 |
 | limit | integer | No | 10 | 上位 N 件 (1〜20) |
 | include_inactive | boolean | No | false | true: 非アクティブ商品も含む |
 
@@ -479,13 +478,13 @@ Reserved ロックを解除すると同時に物理在庫を減らす。
       "code": "PIPE-001",
       "name": "ステンレスパイプ 25A",
       "unit": "本",
-      "unit_price": 2500,
       "on_hand": 120,
       "reserved_total": 30,
       "reserved_pending_return": 10,
       "reserved_pending_order": 5,
       "available": 90,
-      "stock_value": 300000
+      "reorder_point": 10,
+      "needs_reorder": false
     }
   ],
   "others_total": {
@@ -493,8 +492,7 @@ Reserved ロックを解除すると同時に物理在庫を減らす。
     "reserved_total": 5,
     "reserved_pending_return": 0,
     "reserved_pending_order": 0,
-    "available": 45,
-    "stock_value": 125000
+    "available": 45
   }
 }
 ```
@@ -503,10 +501,11 @@ Reserved ロックを解除すると同時に物理在庫を減らす。
 
 | フィールド | 説明 |
 |-----------|------|
-| reserved_total | bucket=RESERVED の qty_delta SUM |
-| reserved_pending_return | reserved_total のうち reason="RETURN_PENDING" の分 |
+| on_hand | 物理在庫数 (棒グラフの全体長) |
+| available | on_hand − reserved_total (棒グラフの通常色部分) |
+| reserved_pending_return | reserved_total のうち reason="RETURN_PENDING" の分 (棒グラフの薄い色部分) |
 | reserved_pending_order | reserved_total のうち reason="ORDER_PENDING_SHIPMENT" の分 (将来用, 現在は 0) |
-| stock_value | on_hand × unit_price |
+| needs_reorder | `available <= reorder_point` の場合 true (UI で警告表示) |
 | others_total | TopN に含まれない商品の合計値 |
 
 ---

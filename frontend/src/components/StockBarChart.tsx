@@ -6,20 +6,26 @@ interface Props {
   others: OthersTotalSummary;
 }
 
-function Bar({ available, pendingReturn, onHand }: {
+function Bar({ available, reserved, pendingReturn, onHand }: {
   available: number;
+  reserved: number;
   pendingReturn: number;
   onHand: number;
   maxOnHand: number;
 }) {
   if (onHand === 0) return <div className="h-6 rounded bg-gray-100" />;
   const availPct = (available / onHand) * 100;
+  const reservedPct = (reserved / onHand) * 100;
   const pendingPct = (pendingReturn / onHand) * 100;
   return (
     <div className="flex h-6 rounded overflow-hidden bg-gray-100 w-full">
       <div
         className="bg-blue-500 transition-all duration-300"
         style={{ width: `${availPct}%` }}
+      />
+      <div
+        className="bg-purple-300 transition-all duration-300"
+        style={{ width: `${reservedPct}%` }}
       />
       <div
         className="bg-blue-200 transition-all duration-300"
@@ -43,6 +49,7 @@ export default function StockBarChart({ items, others }: Props) {
           <div className="flex-1 min-w-0" style={{ maxWidth: `${(item.on_hand / maxOnHand) * 100}%` }}>
             <Bar
               available={item.available}
+              reserved={item.reserved_total - item.reserved_pending_return}
               pendingReturn={item.reserved_pending_return}
               onHand={item.on_hand}
               maxOnHand={maxOnHand}
@@ -65,6 +72,7 @@ export default function StockBarChart({ items, others }: Props) {
           <div className="flex-1 min-w-0" style={{ maxWidth: `${(others.on_hand / maxOnHand) * 100}%` }}>
             <Bar
               available={others.available}
+              reserved={others.reserved_total - others.reserved_pending_return}
               pendingReturn={others.reserved_pending_return}
               onHand={others.on_hand}
               maxOnHand={maxOnHand}
@@ -81,6 +89,10 @@ export default function StockBarChart({ items, others }: Props) {
         <span className="flex items-center gap-1">
           <span className="inline-block w-3 h-3 rounded bg-blue-500" />
           Available
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-3 h-3 rounded bg-purple-300" />
+          引当
         </span>
         <span className="flex items-center gap-1">
           <span className="inline-block w-3 h-3 rounded bg-blue-200" />

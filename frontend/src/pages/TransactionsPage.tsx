@@ -21,6 +21,19 @@ interface Transaction {
   created_at: string;
 }
 
+// Format number with thousand separators
+function formatNumber(value: number): string {
+  return value.toLocaleString('ja-JP');
+}
+
+// Parse formatted number string to number
+function parseFormattedNumber(value: string): number | null {
+  const cleaned = value.replace(/,/g, '').trim();
+  if (!cleaned) return null;
+  const num = parseInt(cleaned, 10);
+  return isNaN(num) ? null : num;
+}
+
 export default function TransactionsPage() {
   // Form state
   const [operationType, setOperationType] = useState<TransactionType>('IN');
@@ -84,8 +97,8 @@ export default function TransactionsPage() {
       return;
     }
 
-    const qtyNum = parseInt(qty, 10);
-    if (isNaN(qtyNum) || qtyNum < 1) {
+    const qtyNum = parseFormattedNumber(qty);
+    if (qtyNum === null || qtyNum < 1) {
       setError('数量は1以上の整数を入力してください');
       return;
     }
@@ -136,8 +149,8 @@ export default function TransactionsPage() {
 
   const getPreviewChange = (): { from: number; to: number } | null => {
     if (!selectedProduct || !qty) return null;
-    const qtyNum = parseInt(qty, 10);
-    if (isNaN(qtyNum)) return null;
+    const qtyNum = parseFormattedNumber(qty);
+    if (qtyNum === null) return null;
 
     const from = selectedProduct.available;
     const to = operationType === 'IN' ? from + qtyNum : from - qtyNum;
@@ -274,16 +287,28 @@ export default function TransactionsPage() {
               <label htmlFor="qty" className="block text-sm font-medium text-gray-700 mb-2">
                 数量 <span className="text-red-500">*</span>
               </label>
-              <input
-                type="number"
-                id="qty"
-                value={qty}
-                onChange={(e) => setQty(e.target.value)}
-                min="1"
-                step="1"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="例: 10"
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  id="qty"
+                  value={qty}
+                  onChange={(e) => setQty(e.target.value)}
+                  onBlur={() => {
+                    const parsed = parseFormattedNumber(qty);
+                    if (parsed !== null && parsed > 0) {
+                      setQty(formatNumber(parsed));
+                    }
+                  }}
+                  className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="例: 10"
+                  inputMode="numeric"
+                />
+                {selectedProduct && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500 pointer-events-none">
+                    {selectedProduct.unit}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Reason (OUT only) */}

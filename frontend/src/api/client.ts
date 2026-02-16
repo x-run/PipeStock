@@ -2,6 +2,9 @@ import type {
   DashboardTopResponse,
   StockByCategoryResponse,
   StockListResponse,
+  TransactionRequest,
+  BatchTransactionRequest,
+  TransactionResponse,
 } from '../types/api';
 
 const BASE = '/api/v1';
@@ -10,6 +13,19 @@ async function get<T>(url: string): Promise<T> {
   const res = await fetch(`${BASE}${url}`);
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+async function post<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${url}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error?.message || `API error: ${res.status}`);
   }
   return res.json();
 }
@@ -40,4 +56,18 @@ export function fetchStockList(params: StockListParams = {}): Promise<StockListR
   if (params.per_page) sp.set('per_page', String(params.per_page));
   const qs = sp.toString();
   return get(`/stock${qs ? `?${qs}` : ''}`);
+}
+
+export function createTransaction(
+  productId: string,
+  req: TransactionRequest
+): Promise<TransactionResponse> {
+  return post(`/products/${productId}/transactions`, req);
+}
+
+export function createBatchTransaction(
+  productId: string,
+  req: BatchTransactionRequest
+): Promise<TransactionResponse> {
+  return post(`/products/${productId}/transactions/batch`, req);
 }

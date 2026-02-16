@@ -71,3 +71,45 @@ export interface StockListResponse {
   data: StockListItem[];
   pagination: PaginationMeta;
 }
+
+// -- Transactions --
+
+export type TransactionType = 'IN' | 'OUT' | 'ADJUST' | 'RESERVE' | 'UNRESERVE';
+export type Direction = 'INCREASE' | 'DECREASE';
+export type Operation =
+  | TransactionType
+  | 'RETURN_ARRIVAL'
+  | 'RETURN_APPROVE'
+  | 'RETURN_REJECT';
+
+export interface Transaction {
+  id: string;
+  product_id: string;
+  type: TransactionType;
+  bucket: 'ON_HAND' | 'RESERVED';
+  qty_delta: number;
+  reason: string | null;
+  created_at: string;
+}
+
+export interface StockSummary {
+  available: number;
+  on_hand: number;
+  reserved: number;
+}
+
+export interface TransactionRequest {
+  type: TransactionType;
+  qty: number;
+  direction?: Direction;
+  reason?: string;
+}
+
+export interface BatchTransactionRequest {
+  transactions: TransactionRequest[];
+}
+
+export interface TransactionResponse {
+  data: Transaction | Transaction[];
+  stock: StockSummary;
+}

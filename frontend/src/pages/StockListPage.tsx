@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Search, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { fetchStockList, type StockListParams } from '../api/client';
-import type { StockListItem, PaginationMeta } from '../types/api';
+import type { StockListItem, PaginationMeta, Operation } from '../types/api';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import OperationsDropdown from '../components/OperationsDropdown';
+import TransactionModal from '../components/TransactionModal';
 
 type SortKey = 'qty_desc' | 'qty_asc' | 'value_desc' | 'value_asc' | 'updated_desc';
 const SORT_LABELS: Record<SortKey, string> = {
@@ -26,6 +28,8 @@ export default function StockListPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<StockListItem | null>(null);
+  const [selectedOperation, setSelectedOperation] = useState<Operation | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -48,6 +52,21 @@ export default function StockListPage() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
+  };
+
+  const handleOpenModal = (product: StockListItem, operation: Operation) => {
+    setSelectedProduct(product);
+    setSelectedOperation(operation);
+  };
+
+  const handleCloseModal = () => {
+    setSelectedProduct(null);
+    setSelectedOperation(null);
+  };
+
+  const handleTransactionSuccess = () => {
+    handleCloseModal();
+    load(); // Reload stock list
   };
 
   return (
@@ -95,6 +114,7 @@ export default function StockListPage() {
                 <th className="px-4 py-3 font-medium text-gray-600 text-right font-bold">Available</th>
                 <th className="px-4 py-3 font-medium text-gray-600 text-right">発注点</th>
                 <th className="px-4 py-3 font-medium text-gray-600 text-center">状態</th>
+                <th className="px-4 py-3 font-medium text-gray-600 text-center">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -135,6 +155,23 @@ export default function StockListPage() {
                       <span className="text-xs text-gray-400">正常</span>
                     )}
                   </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleOpenModal(item, 'IN')}
+                        className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                      >
+                        入庫
+                      </button>
+                      <button
+                        onClick={() => handleOpenModal(item, 'OUT')}
+                        className="px-2 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                      >
+                        出庫
+                      </button>
+                      <OperationsDropdown onSelect={(op) => handleOpenModal(item, op)} />
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -167,6 +204,16 @@ export default function StockListPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Transaction Modal */}
+      {selectedProduct && selectedOperation && (
+        <TransactionModal
+          product={selectedProduct}
+          operation={selectedOperation}
+          onSuccess={handleTransactionSuccess}
+          onClose={handleCloseModal}
+        />
       )}
     </div>
   );

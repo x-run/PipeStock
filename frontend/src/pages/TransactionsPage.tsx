@@ -359,8 +359,8 @@ export default function TransactionsPage() {
         </div>
       </div>
 
-      {/* Sidebar */}
-      <div className="w-80 space-y-4 overflow-y-auto">
+      {/* Sidebar - Hidden on mobile, visible on lg+ screens */}
+      <div className="hidden lg:block w-80 space-y-4 overflow-y-auto">
         {/* Preview */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <h2 className="text-sm font-semibold text-gray-700 mb-3">操作プレビュー</h2>

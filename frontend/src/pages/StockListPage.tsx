@@ -135,15 +135,14 @@ export default function StockListPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50 text-left">
-                <th className="px-4 py-3 font-medium text-gray-600">Code</th>
                 <th className="px-4 py-3 font-medium text-gray-600">商品名</th>
                 <th className="px-4 py-3 font-medium text-gray-600">カテゴリ</th>
-                <th className="px-4 py-3 font-medium text-gray-600 text-right">On-hand</th>
-                <th className="px-4 py-3 font-medium text-gray-600 text-right">Reserved</th>
-                <th className="px-4 py-3 font-medium text-gray-600 text-right font-bold">Available</th>
+                <th className="px-4 py-3 font-medium text-gray-600 text-right">合計</th>
+                <th className="px-4 py-3 font-medium text-gray-600 text-right">保留</th>
+                <th className="px-4 py-3 font-medium text-gray-600 text-right font-bold">利用可能</th>
                 <th className="px-4 py-3 font-medium text-gray-600 text-right">発注点</th>
                 <th className="px-4 py-3 font-medium text-gray-600 text-center">状態</th>
-                <th className="px-4 py-3 font-medium text-gray-600 text-center">操作</th>
+                <th className="px-4 py-3 font-medium text-gray-600">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -154,8 +153,10 @@ export default function StockListPage() {
                     item.needs_reorder ? 'bg-amber-50/50' : ''
                   }`}
                 >
-                  <td className="px-4 py-3 font-mono text-gray-700">{item.code}</td>
-                  <td className="px-4 py-3 text-gray-900">{item.name}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-gray-900">{item.name}</div>
+                    <div className="text-xs text-gray-400 font-mono">{item.code}</div>
+                  </td>
                   <td className="px-4 py-3 text-gray-500">{extractCategory(item.name)}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-gray-700">
                     {item.on_hand.toLocaleString()} {item.unit}
